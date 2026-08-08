@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>{% block title %}daily-companion{% endblock %}</title>
-{% block head %}{% endblock %}
 <style>
   :root {
     --bg: #fbfaf8; --card: #ffffff; --text: #23201d; --muted: #6f6a64;
@@ -31,7 +30,7 @@
   }
   header h1 { font-size: 17px; margin: 0; letter-spacing: .02em; }
   header h1 a { color: var(--text); text-decoration: none; }
-  nav { display: flex; gap: 14px; font-size: 14px; }
+  nav { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 14px; justify-content: flex-end; }
   nav a { color: var(--muted); text-decoration: none; }
   nav a:hover, nav a.on { color: var(--accent); }
   h2 { font-size: 15px; color: var(--muted); font-weight: 600; margin: 26px 0 10px; letter-spacing: .04em; }
@@ -75,6 +74,9 @@
   .pending { border-color: var(--accent); }
   footer { margin-top: 34px; color: var(--muted); font-size: 13px; text-align: center; }
 </style>
+{# 画面ごとの追加スタイルは共通スタイルより後に置く。
+   先に置くと、同じ強さの指定で共通側に負けて上書きできない。 #}
+{% block head %}{% endblock %}
 </head>
 <body>
 <div class="wrap">
@@ -83,6 +85,7 @@
     <nav>
       <a href="/">今日</a>
       <a href="/calendar">暦</a>
+      <a href="/news">ニュース</a>
       <a href="/reviews">週次</a>
       <a href="/search">検索</a>
       <a href="/status">状態</a>

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}ニュース — daily-companion{% endblock %}
+
+{% block head %}
+<style>
+  /* 本文用の読み幅(680px)ではデータ表には狭く、要約の列が潰れる。
+     この画面だけ広げる。 */
+  .wrap { max-width: 1040px; }
+
+  .news-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .news-table th {
+    text-align: left; font-size: 12px; color: var(--muted); font-weight: 600;
+    letter-spacing: .05em; padding: 0 10px 8px 0; border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; background: var(--bg);
+  }
+  .news-table td {
+    padding: 12px 10px 12px 0; vertical-align: top;
+    border-bottom: 1px solid var(--line);
+  }
+  /* 日付が変わる行に太めの区切りを入れて、日のまとまりを見せる */
+  .news-table tr.newday td { border-top: 2px solid var(--line); }
+  .news-table tr:hover td { background: var(--card); }
+
+  .c-date { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted); width: 1%; }
+  .c-topic { white-space: nowrap; width: 1%; }
+  .c-title { min-width: 180px; }
+  .c-summary { color: var(--muted); line-height: 1.6; }
+
+  .c-title a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .c-title a:hover { text-decoration: underline; }
+
+  .chip {
+    font-size: 13px; padding: 4px 12px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); text-decoration: none;
+    white-space: nowrap;
+  }
+  .chip.on { outline: 1px solid var(--accent); }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+
+  /* 狭い画面では横に4列並べても読めないので、1件を縦積みにする */
+  @media (max-width: 640px) {
+    .news-table, .news-table tbody, .news-table tr, .news-table td { display: block; width: auto; }
+    .news-table thead { display: none; }
+    .news-table tr {
+      border-bottom: 1px solid var(--line); padding: 12px 0;
+    }
+    .news-table tr.newday { border-top: 2px solid var(--line); }
+    .news-table td { border: none; padding: 0; }
+    .c-date, .c-topic { display: inline-block; font-size: 12px; margin-right: 8px; }
+    .c-title { margin: 3px 0 2px; }
+    .c-summary { font-size: 13px; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2>過去のニュース</h2>
+
+{% if history.topics %}
+<div class="filters">
+  <a class="chip{% if not history.active_topic %} on{% endif %}" href="/news">すべて</a>
+  {% for name, label in history.topics %}
+  <a class="chip{% if history.active_topic == name %} on{% endif %}"
+     href="/news?topic={{ name }}">{{ label }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if history.is_empty %}
+<div class="card">
+  <p class="muted" style="margin:0">
+    {% if history.active_topic %}このジャンルの記録はまだありません。
+    {% else %}まだニュースの記録がありません。毎朝7:30に収集されます。{% endif %}
+  </p>
+</div>
+{% else %}
+
+<div style="overflow-x:auto">
+  <table class="news-table">
+    <thead>
+      <tr>
+        <th class="c-date">日付</th>
+        <th class="c-topic">ジャンル</th>
+        <th class="c-title">見出し</th>
+        <th class="c-summary">要約</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in history.rows %}
+      <tr {% if loop.previtem and loop.previtem.digest_date != row.digest_date %}class="newday"{% endif %}>
+        <td class="c-date">{{ row.date_label }}({{ row.weekday }})</td>
+        <td class="c-topic"><span class="chip">{{ row.topic_name }}</span></td>
+        <td class="c-title">
+          <a href="{{ row.url }}" target="_blank" rel="noopener noreferrer">{{ row.title }} ↗</a>
+        </td>
+        <td class="c-summary">{{ row.summary }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block footer %}
+{% if not history.is_empty %}{{ history.rows|length }}件 / {{ history.day_count }}日分{% endif %}
+{% endblock %}

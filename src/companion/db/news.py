@@ -100,6 +100,31 @@ def list_digests_for(conn: sqlite3.Connection, digest_date: date) -> list[NewsDi
     return [_to_digest(row) for row in rows]
 
 
+def list_digests(
+    conn: sqlite3.Connection, *, limit: int = 200, topic: str | None = None
+) -> list[NewsDigest]:
+    """過去の要約を新しい日から順に返す. topic を指定するとそのジャンルだけ."""
+    if topic:
+        rows = conn.execute(
+            "SELECT * FROM news_digests WHERE topic = ?"
+            " ORDER BY digest_date DESC, topic LIMIT ?",
+            (topic, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM news_digests ORDER BY digest_date DESC, topic LIMIT ?", (limit,)
+        ).fetchall()
+    return [_to_digest(row) for row in rows]
+
+
+def list_used_topics(conn: sqlite3.Connection) -> list[str]:
+    """これまでに記録があるジャンルを返す. 絞り込みの選択肢に使う."""
+    rows = conn.execute(
+        "SELECT DISTINCT topic FROM news_digests ORDER BY topic"
+    ).fetchall()
+    return [row["topic"] for row in rows]
+
+
 def get_digest(conn: sqlite3.Connection, digest_date: date, topic: str) -> NewsDigest | None:
     """指定日・指定ジャンルの要約を返す. なければ None."""
     row = conn.execute(

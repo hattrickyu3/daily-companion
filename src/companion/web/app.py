@@ -38,6 +38,7 @@ from companion.services.month_view import WEEKDAY_LABELS
 from companion.services.month_view import build as build_month
 from companion.services.month_view import month_bounds, parse_month
 from companion.services.news import topic_label
+from companion.services.news_history import build as build_news_history
 from companion.services.schedule import get_events_for
 
 log = logging.getLogger(__name__)
@@ -254,6 +255,15 @@ def calendar_page(request: Request, month: str | None = None) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "calendar.html", {"view": view, "weekdays": WEEKDAY_LABELS}
     )
+
+
+@app.get("/news", response_class=HTMLResponse)
+def news_page(request: Request, topic: str | None = None) -> HTMLResponse:
+    """過去のニュースを表で見る画面."""
+    with session() as conn:
+        history = build_news_history(conn, topic=topic)
+
+    return templates.TemplateResponse(request, "news.html", {"history": history})
 
 
 @app.get("/reviews", response_class=HTMLResponse)
