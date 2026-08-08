@@ -87,7 +87,7 @@
 
 <div class="pager">
   <a href="/entries/{{ prev_day.isoformat() }}">← {{ prev_day.strftime("%m/%d") }}</a>
-  <a href="/entries">一覧</a>
+  <a href="/calendar?month={{ day.strftime('%Y-%m') }}">暦に戻る</a>
   <a href="/entries/{{ next_day.isoformat() }}">{{ next_day.strftime("%m/%d") }} →</a>
 </div>
 {% endblock %}

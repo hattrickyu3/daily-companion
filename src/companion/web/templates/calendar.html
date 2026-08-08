@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}{{ view.label }} — daily-companion{% endblock %}
+
+{% block head %}
+<style>
+  .month-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .month-head h2 { margin: 0; font-size: 18px; color: var(--text); letter-spacing: .02em; }
+  .month-head a {
+    color: var(--muted); text-decoration: none; font-size: 15px;
+    padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px;
+  }
+  .month-head a:hover { color: var(--accent); border-color: var(--accent); }
+
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .wd {
+    text-align: center; font-size: 12px; color: var(--muted);
+    padding-bottom: 4px; letter-spacing: .05em;
+  }
+  .wd.sun { color: #c0554a; }
+  .wd.sat { color: #4a6fa5; }
+
+  .cell {
+    aspect-ratio: 1 / 1; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--card); padding: 4px; display: flex; flex-direction: column;
+    gap: 2px; text-decoration: none; color: inherit; overflow: hidden;
+    min-height: 44px;
+  }
+  .cell.blank { background: transparent; border-color: transparent; }
+  .cell.today { border-color: var(--accent); border-width: 2px; padding: 3px; }
+  .cell.written { background: var(--accent-soft); }
+  .cell:hover { border-color: var(--accent); }
+
+  .num { font-size: 13px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .num.sun { color: #c0554a; }
+  .num.sat { color: #4a6fa5; }
+  .marks { display: flex; gap: 3px; align-items: center; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .ev { font-size: 10px; color: var(--muted); line-height: 1; }
+  .snip {
+    font-size: 10px; line-height: 1.25; color: var(--muted);
+    overflow: hidden; flex: 1;
+  }
+
+  /* 狭い画面では抜粋を隠し、印だけにして潰れないようにする */
+  @media (max-width: 480px) {
+    .snip { display: none; }
+    .cell { aspect-ratio: 1 / 1.15; }
+  }
+
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 14px; margin-top: 16px;
+    font-size: 13px; color: var(--muted);
+  }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="month-head">
+  <a href="/calendar?month={{ view.prev_month }}">←</a>
+  <h2>{{ view.label }}</h2>
+  <a href="/calendar?month={{ view.next_month }}">→</a>
+</div>
+
+<div class="grid">
+  {% for name in weekdays %}
+  <div class="wd{% if loop.index0 == 0 %} sun{% elif loop.index0 == 6 %} sat{% endif %}">{{ name }}</div>
+  {% endfor %}
+
+  {% for week in view.weeks %}
+    {% for cell in week %}
+      {% if cell.is_blank %}
+      <div class="cell blank"></div>
+      {% else %}
+      <a class="cell{% if cell.is_today %} today{% endif %}{% if cell.has_entry %} written{% endif %}"
+         href="/entries/{{ cell.day.isoformat() }}">
+        <span class="num{% if cell.is_sunday %} sun{% elif cell.is_saturday %} sat{% endif %}">{{ cell.day.day }}</span>
+        <span class="marks">
+          {% if cell.has_entry %}<span class="dot" title="日記あり"></span>{% endif %}
+          {% if cell.event_count %}<span class="ev">予定{{ cell.event_count }}</span>{% endif %}
+        </span>
+        {% if cell.snippet %}<span class="snip">{{ cell.snippet }}</span>{% endif %}
+      </a>
+      {% endif %}
+    {% endfor %}
+  {% endfor %}
+</div>
+
+<div class="legend">
+  <span><span class="dot"></span>日記あり</span>
+  <span>この月の日記 {{ view.entry_count }}件</span>
+  <span>予定 {{ view.event_count }}件</span>
+</div>
+
+<p style="margin-top:20px"><a href="/entries" class="muted small">日記を一覧・タグで絞り込む →</a></p>
+{% endblock %}

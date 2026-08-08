@@ -29,6 +29,9 @@ from companion.db.repository import (
 )
 from companion.db.reviews import list_reviews
 from companion.services.diary import append_entry, save_entry, structure_entry
+from companion.services.month_view import WEEKDAY_LABELS
+from companion.services.month_view import build as build_month
+from companion.services.month_view import parse_month
 from companion.services.news import topic_label
 from companion.services.schedule import get_events_for
 
@@ -166,6 +169,20 @@ def entry_page(request: Request, entry_date: str) -> HTMLResponse:
             "prev_day": day - timedelta(days=1),
             "next_day": day + timedelta(days=1),
         },
+    )
+
+
+@app.get("/calendar", response_class=HTMLResponse)
+def calendar_page(request: Request, month: str | None = None) -> HTMLResponse:
+    """月カレンダー. 日記の有無と予定の件数を一覧する."""
+    today = today_local()
+    year, month_number = parse_month(month, today)
+
+    with session() as conn:
+        view = build_month(conn, year, month_number, today)
+
+    return templates.TemplateResponse(
+        request, "calendar.html", {"view": view, "weekdays": WEEKDAY_LABELS}
     )
 
 
