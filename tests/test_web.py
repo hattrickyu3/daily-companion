@@ -153,11 +153,13 @@ def test_日記を検索できる(client) -> None:
     assert "2026/08/08" in response.text
 
 
-def test_日記のない日でも詳細画面は開ける(client) -> None:
+def test_日記のない日は入力欄が出る(client) -> None:
+    # Arrange / Act: 行き止まりにせず、その場で書けるようにする
     response = client.get("/entries/2020-01-01")
 
+    # Assert
     assert response.status_code == 200
-    assert "この日の日記はまだありません" in response.text
+    assert "この日の日記を書く" in response.text
 
 
 def test_不正な日付は一覧に戻される(client) -> None:

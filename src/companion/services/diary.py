@@ -14,7 +14,12 @@ import logging
 import sqlite3
 from datetime import date
 
-from companion.db.repository import StructuredEntry, apply_structure, save_raw_text
+from companion.db.repository import (
+    StructuredEntry,
+    append_raw_text,
+    apply_structure,
+    save_raw_text,
+)
 from companion.integrations.claude_runner import ClaudeError, extract_json_block, run_claude
 
 log = logging.getLogger(__name__)
@@ -112,6 +117,11 @@ def structure_text(entry_date: date, raw_text: str) -> StructuredEntry | None:
 def save_entry(conn: sqlite3.Connection, entry_date: date, raw_text: str) -> int:
     """原文だけを保存してIDを返す. 構造化は呼び出し側が別途行う."""
     return save_raw_text(conn, entry_date, raw_text)
+
+
+def append_entry(conn: sqlite3.Connection, entry_date: date, additional_text: str) -> int:
+    """既存の原文に書き足してIDを返す. 構造化は呼び出し側が別途行う."""
+    return append_raw_text(conn, entry_date, additional_text)
 
 
 def structure_entry(conn: sqlite3.Connection, entry_id: int, entry_date: date, raw_text: str) -> bool:

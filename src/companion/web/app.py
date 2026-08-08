@@ -28,7 +28,7 @@ from companion.db.repository import (
     search_entries,
 )
 from companion.db.reviews import list_reviews
-from companion.services.diary import save_entry, structure_entry
+from companion.services.diary import append_entry, save_entry, structure_entry
 from companion.services.news import topic_label
 from companion.services.schedule import get_events_for
 
@@ -74,23 +74,59 @@ def today_page(request: Request) -> HTMLResponse:
     )
 
 
+def _parse_day(value: str) -> date | None:
+    """フォームから来た日付を解釈する. 不正なら None."""
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _store_and_structure(
+    background: BackgroundTasks, day: date, text: str, *, append: bool
+) -> RedirectResponse:
+    """原文を保存し、全文の構造化を裏で走らせてから詳細画面へ送る.
+
+    構造化は書き足した部分だけでなく、常にその日の全文に対して行う。
+    そうしないと要約が一部だけを指すものになってしまう。
+    """
+    with session() as conn:
+        entry_id = append_entry(conn, day, text) if append else save_entry(conn, day, text)
+        entry = get_entry(conn, day)
+
+    full_text = entry.raw_text if entry else text
+    background.add_task(_structure_in_background, entry_id, day, full_text)
+    return RedirectResponse(f"/entries/{day.isoformat()}", status_code=303)
+
+
 @app.post("/entries")
 def save_entry_route(
     background: BackgroundTasks,
     raw_text: str = Form(...),
     entry_date: str = Form(...),
 ) -> RedirectResponse:
-    """日記を保存する. 原文を書いたらすぐ返し、整理は裏で行う."""
-    day = date.fromisoformat(entry_date)
+    """日記を全文で保存し直す. 既存の内容は置き換わる."""
+    day = _parse_day(entry_date)
     text = raw_text.strip()
-    if not text:
+    if day is None or not text:
         return RedirectResponse("/", status_code=303)
 
-    with session() as conn:
-        entry_id = save_entry(conn, day, text)
+    return _store_and_structure(background, day, text, append=False)
 
-    background.add_task(_structure_in_background, entry_id, day, text)
-    return RedirectResponse(f"/entries/{day.isoformat()}", status_code=303)
+
+@app.post("/entries/append")
+def append_entry_route(
+    background: BackgroundTasks,
+    raw_text: str = Form(...),
+    entry_date: str = Form(...),
+) -> RedirectResponse:
+    """日記に書き足す. 既に書いた内容は消さない."""
+    day = _parse_day(entry_date)
+    text = raw_text.strip()
+    if day is None or not text:
+        return RedirectResponse("/", status_code=303)
+
+    return _store_and_structure(background, day, text, append=True)
 
 
 @app.get("/entries", response_class=HTMLResponse)

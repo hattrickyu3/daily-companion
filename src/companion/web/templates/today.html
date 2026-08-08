@@ -25,15 +25,33 @@
   {% endif %}
 </div>
 
-<h2>{% if entry %}今日の日記（保存済み）{% else %}今日は何をしましたか{% endif %}</h2>
+{% if entry %}
+<h2>今日の日記に書き足す</h2>
+<form action="/entries/append" method="post">
+  <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+  <textarea name="raw_text" placeholder="そのあと何がありましたか。" autocapitalize="sentences"></textarea>
+  <button type="submit">書き足す</button>
+</form>
+<p class="muted small">今ある内容は消えません。要約は全文からまとめ直されます。</p>
+
+<details style="margin-top:18px">
+  <summary class="muted small" style="cursor:pointer">全文を書き直す</summary>
+  <form action="/entries" method="post" style="margin-top:10px">
+    <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+    <textarea name="raw_text" autocapitalize="sentences">{{ entry.raw_text }}</textarea>
+    <button type="submit">書き直して保存</button>
+  </form>
+  <p class="muted small">こちらは内容がまるごと入れ替わります。</p>
+</details>
+
+{% else %}
+<h2>今日は何をしましたか</h2>
 <form action="/entries" method="post">
   <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
   <textarea name="raw_text" placeholder="思いつくまま書いてください。整理はClaudeがやります。"
-            autocapitalize="sentences">{{ entry.raw_text if entry else "" }}</textarea>
-  <button type="submit">{% if entry %}書き直して保存{% else %}保存する{% endif %}</button>
+            autocapitalize="sentences"></textarea>
+  <button type="submit">保存する</button>
 </form>
-{% if entry %}
-<p class="muted small">書き直すと、前の要約とタグは作り直されます。</p>
 {% endif %}
 
 {% if digests %}

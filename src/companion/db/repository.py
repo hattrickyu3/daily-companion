@@ -120,6 +120,27 @@ def save_raw_text(conn: sqlite3.Connection, entry_date: date, raw_text: str) -> 
     return entry_id
 
 
+def append_raw_text(conn: sqlite3.Connection, entry_date: date, additional_text: str) -> int:
+    """既存の原文の末尾に書き足し、エントリIDを返す.
+
+    その日のエントリがなければ新規に作る。
+    書き足した内容が既存の要約に反映されていないので、構造化結果は破棄する
+    （呼び出し側が全文をまとめて構造化し直す）。
+
+    区切りは空行だけにして、時刻などをこちらから挿し込むことはしない。
+    原文は本人が書いたものだけで構成される、という前提を崩さないため。
+    """
+    existing = conn.execute(
+        "SELECT raw_text FROM entries WHERE entry_date = ?", (entry_date.isoformat(),)
+    ).fetchone()
+
+    if existing is None:
+        return save_raw_text(conn, entry_date, additional_text)
+
+    merged = f"{existing['raw_text'].rstrip()}\n\n{additional_text.strip()}"
+    return save_raw_text(conn, entry_date, merged)
+
+
 def apply_structure(conn: sqlite3.Connection, entry_id: int, structured: StructuredEntry) -> None:
     """Claudeの構造化結果をエントリに反映する."""
     conn.execute(

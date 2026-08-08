@@ -10,9 +10,13 @@
 <p class="date">{{ day.strftime("%Y年%m月%d日 (%a)") }}</p>
 
 {% if not entry %}
-<div class="card">
-  <p class="muted" style="margin:0">この日の日記はまだありません。</p>
-</div>
+<h2>この日の日記を書く</h2>
+<form action="/entries" method="post">
+  <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+  <textarea name="raw_text" placeholder="この日は何がありましたか。あとからでも書けます。"
+            autocapitalize="sentences"></textarea>
+  <button type="submit">保存する</button>
+</form>
 {% else %}
 
 {% if entry.is_structured %}
@@ -50,6 +54,24 @@
 
 <h2>書いた内容</h2>
 <div class="card"><p class="raw" style="margin:0">{{ entry.raw_text }}</p></div>
+
+<h2>書き足す</h2>
+<form action="/entries/append" method="post">
+  <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+  <textarea name="raw_text" placeholder="思い出したことがあれば。" autocapitalize="sentences"></textarea>
+  <button type="submit">書き足す</button>
+</form>
+<p class="muted small">今ある内容は消えません。要約は全文からまとめ直されます。</p>
+
+<details style="margin-top:18px">
+  <summary class="muted small" style="cursor:pointer">全文を書き直す</summary>
+  <form action="/entries" method="post" style="margin-top:10px">
+    <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+    <textarea name="raw_text" autocapitalize="sentences">{{ entry.raw_text }}</textarea>
+    <button type="submit">書き直して保存</button>
+  </form>
+  <p class="muted small">こちらは内容がまるごと入れ替わります。</p>
+</details>
 {% endif %}
 
 {% if events %}
