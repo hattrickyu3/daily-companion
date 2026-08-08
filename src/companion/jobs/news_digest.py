@@ -5,12 +5,17 @@
 朝のブリーフィング(morning_brief)から呼ばれるほか、単体でも実行できる。
 このジョブ自体は通知しない。朝の通知を1回にまとめるためである。
 結果はWeb画面で読む。
+
+ジャンルは同時に走らせる。1ジャンルあたり2〜5分かかるので、
+順番に処理するとジャンルを増やしたときに朝のジョブが
+タスクスケジューラの実行上限(15分)に当たってしまう。
+同時実行なら、かかる時間はジャンル数ではなく一番遅いジャンルで決まる。
 """
 
 from __future__ import annotations
 
 import logging
-import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 from companion.clock import today_local
@@ -18,59 +23,51 @@ from companion.config import get_config
 from companion.db.connection import session
 from companion.db.news import save_digest
 from companion.jobs.base import run_job
-from companion.services.news import generate
+from companion.services.news import NewsResult, generate
 
 log = logging.getLogger(__name__)
 
 JOB_NAME = "news_digest"
 
-# 全ジャンル合わせた時間予算。これを超えたら残りのジャンルは諦める。
-# 朝のジョブ全体がタスクスケジューラの実行上限(15分)に当たると、
-# ニュースだけでなくブリーフィングの通知ごと打ち切られてしまうため。
-#
-# 注意: 予算の判定はジャンルを始める前に行うので、予算ぎりぎりで始まった最後の1件は
-# さらに NEWS_TIMEOUT_SEC だけ走りうる。実際の最悪値は
-#   TOTAL_BUDGET_SEC + NEWS_TIMEOUT_SEC + ブリーフィング + 同期・通知
-# になる。この合計が15分に収まる値にしてある（test_news_budget.py で検証）。
-TOTAL_BUDGET_SEC = 300
+# 同時に走らせる claude -p の数。増やすほど速くなるが、
+# 1プロセスあたりの負荷が小さくないので上限を設ける。
+MAX_CONCURRENT = 3
+
+
+def _generate_one(topic: str, today: date) -> NewsResult:
+    """1ジャンルを生成する. 例外は外に出さない（他のジャンルを巻き込まないため）."""
+    try:
+        return generate(topic, today)
+    except Exception as exc:  # noqa: BLE001 - 1ジャンルの失敗で全体を止めない
+        log.warning("news generation raised for %s: %s", topic, exc)
+        return NewsResult(topic=topic, items=())
 
 
 def collect(today: date) -> str:
-    """設定された全ジャンルを収集して保存する. 結果の説明を返す.
+    """設定された全ジャンルを同時に収集して保存する. 結果の説明を返す.
 
     1ジャンルが失敗しても他は続ける。全滅しても例外にはしない。
-    時間予算を超えた場合は残りを飛ばし、そのことを結果に含める。
     """
     topics = get_config().news_topics
-    started = time.monotonic()
+    if not topics:
+        return "対象ジャンルが設定されていません"
+
+    workers = min(len(topics), MAX_CONCURRENT)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(lambda topic: _generate_one(topic, today), topics))
 
     collected: list[str] = []
-    skipped: list[str] = []
-
-    for topic in topics:
-        if time.monotonic() - started > TOTAL_BUDGET_SEC:
-            log.warning("news budget exhausted, skipping %s", topic)
-            skipped.append(topic)
-            continue
-
-        result = generate(topic, today)
+    for result in results:
         if result.is_empty:
-            log.warning("no news collected for %s", topic)
+            log.warning("no news collected for %s", result.topic)
             continue
-
         with session() as conn:
-            save_digest(conn, today, topic, result.to_body(), result.to_sources())
-        collected.append(f"{topic}:{len(result.items)}件")
+            save_digest(conn, today, result.topic, result.to_body(), result.to_sources())
+        collected.append(f"{result.topic}:{len(result.items)}件")
 
-    if not collected and not skipped:
+    if not collected:
         return "ニュースを取得できませんでした"
-
-    parts = []
-    if collected:
-        parts.append("収集: " + "、".join(collected))
-    if skipped:
-        parts.append(f"時間切れで省略: {'、'.join(skipped)}")
-    return " / ".join(parts)
+    return "収集: " + "、".join(collected)
 
 
 def main() -> int:

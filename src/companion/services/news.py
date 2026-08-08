@@ -20,13 +20,17 @@ log = logging.getLogger(__name__)
 
 # 1ジャンルあたりの上限。実測は120〜180秒なので、遅い日を見込んでこの値にする。
 # 全ジャンル合計の上限は jobs/news_digest.py 側の時間予算で別途抑える。
-NEWS_TIMEOUT_SEC = 240
+NEWS_TIMEOUT_SEC = 300
 ALLOWED_TOOLS = "WebSearch,WebFetch"
-MAX_ITEMS = 3
+MAX_ITEMS = 5
 
 TOPIC_LABELS: dict[str, str] = {
     "ai_tech": "AI・IT技術",
     "job_hunting": "就活・業界動向",
+    # 当初はXを主な情報源にする想定だったが、Xはログインなしではほとんど読めず
+    # 実際に集まるのはQiita・note・個人ブログの体験記だった。
+    # 実態に合わせた名前にしてある（検索自体はXも対象にしている）。
+    "social": "就活の実践知・体験記",
     "domestic": "国内一般ニュース",
     "world": "海外・国際情勢",
 }
@@ -34,9 +38,29 @@ TOPIC_LABELS: dict[str, str] = {
 TOPIC_QUERIES: dict[str, str] = {
     "ai_tech": "AI・LLM・開発ツールの新しい発表やリリース。日本語圏・英語圏の両方から。",
     "job_hunting": "日本の新卒就活の動向、主要企業の採用や事業の発表、業界トレンド。",
+    "social": (
+        "就活生にとって実務的に役立つ知見。ES・面接・ガクチカの書き方の具体例、"
+        "選考体験記、インターンの探し方、学生向けの技術学習のコツなど。"
+        "一般論ではなく、実際にやった人の具体的な記録を優先する。"
+    ),
     "domestic": "日本国内の主要ニュース。",
     "world": "国際情勢と経済・市場の動向。",
 }
+
+# ニュース性のない「実用情報」を扱うジャンル。直近1週間という縛りを外す。
+# ESの書き方のような知見は、古くても役に立つものは役に立つため。
+EVERGREEN_TOPICS = frozenset({"social"})
+
+SOCIAL_SEARCH_HINT = """
+検索のしかた:
+- note・Qiita・Zenn・個人ブログの体験記を中心に探してください。
+  実測では、この種の一次情報が最も中身のあるものでした。
+- `site:x.com 就活` のようにXを狙う検索も試してかまいませんが、
+  Xはログインなしでは読めない投稿が多く、期待はしないでください。
+  開けなかったURLは載せないでください。
+- 企業の求人広告やアフィリエイト目的のまとめ記事は避けてください。
+- 同じ内容の焼き直しではなく、書いた人の具体的な行動が読み取れるものを選んでください。
+"""
 
 SYSTEM_PROMPT = (
     "あなたは利用者本人のためのニュース要約アシスタントです。"
@@ -45,11 +69,12 @@ SYSTEM_PROMPT = (
     "推測で事実を補わず、確認できたことだけを書いてください。"
 )
 
-PROMPT_TEMPLATE = """{today}時点の「{label}」に関するニュースを調べて要約してください。
+PROMPT_TEMPLATE = """{today}時点の「{label}」を調べて要約してください。
 
 調べる観点: {query}
-
-WebSearchで検索し、直近1週間以内に公開された話題を{max_items}件選んでください。
+{hint}
+WebSearchで検索し、{recency}話題を{max_items}件選んでください。
+同じ発信元に偏らないよう、出典はできるだけ分散させてください。
 
 次のJSONだけを出力してください。前置きも説明もコードフェンスも不要です。
 
@@ -65,7 +90,8 @@ WebSearchで検索し、直近1週間以内に公開された話題を{max_items
 
 制約:
 - url は実際に参照したページのURLを入れてください。作らないでください。
-- 直近1週間に該当する話題が{max_items}件なければ、見つかった分だけで構いません。
+- 該当する話題が{max_items}件なければ、見つかった分だけで構いません。
+  無理に数を揃えるより、中身のあるものだけを返してください。
 - 憶測や、出典で確認できない内容は書かないでください。
 """
 
@@ -135,10 +161,13 @@ def parse_items(payload: dict) -> tuple[NewsItem, ...]:
 
 def generate(topic: str, today: date) -> NewsResult:
     """1ジャンル分のニュースを生成する. 失敗しても例外は投げず空で返す."""
+    is_evergreen = topic in EVERGREEN_TOPICS
     prompt = PROMPT_TEMPLATE.format(
         today=today.isoformat(),
         label=topic_label(topic),
         query=TOPIC_QUERIES.get(topic, topic_label(topic)),
+        hint=SOCIAL_SEARCH_HINT if topic == "social" else "",
+        recency="" if is_evergreen else "直近1週間以内に公開された",
         max_items=MAX_ITEMS,
     )
 

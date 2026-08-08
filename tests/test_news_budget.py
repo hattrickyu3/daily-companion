@@ -1,13 +1,15 @@
-"""ニュース収集の時間予算のテスト.
+"""ニュース収集の並列化と所要時間のテスト.
 
-朝のジョブ全体がタスクスケジューラの実行上限に当たると、
+朝のジョブ全体がタスクスケジューラの実行上限(15分)に当たると、
 ニュースだけでなくブリーフィングの通知ごと打ち切られる。
-予算超過時に残りを諦めて先に進むことを保証する。
+ジャンルを増やしても上限に収まることを、数字で固定しておく。
 """
 
 from __future__ import annotations
 
-import itertools
+import math
+import threading
+import time
 from datetime import date
 
 import pytest
@@ -16,6 +18,7 @@ from companion.jobs import news_digest
 from companion.services.news import NewsItem, NewsResult
 
 TODAY = date(2026, 8, 8)
+TASK_LIMIT_SEC = 15 * 60
 
 
 @pytest.fixture
@@ -28,7 +31,7 @@ def collector(tmp_path, monkeypatch):
         apply_schema(conn)
 
     monkeypatch.setattr(news_digest, "session", lambda: session(db_path))
-    return news_digest, db_path
+    return news_digest
 
 
 def set_topics(monkeypatch, module, topics: tuple[str, ...]) -> None:
@@ -38,54 +41,116 @@ def set_topics(monkeypatch, module, topics: tuple[str, ...]) -> None:
     monkeypatch.setattr(module, "get_config", lambda: FakeConfig())
 
 
-def one_item(topic: str) -> NewsResult:
-    return NewsResult(
-        topic=topic,
-        items=(NewsItem(title="記事", summary="要約", url="https://example.com/a"),),
+def items(count: int) -> tuple[NewsItem, ...]:
+    return tuple(
+        NewsItem(title=f"記事{i}", summary="要約", url=f"https://example.com/{i}")
+        for i in range(count)
     )
 
 
 def test_全ジャンルを収集して件数を報告する(collector, monkeypatch) -> None:
     # Arrange
-    module, _ = collector
-    set_topics(monkeypatch, module, ("ai_tech", "job_hunting"))
-    monkeypatch.setattr(module, "generate", lambda topic, today: one_item(topic))
+    module = collector
+    set_topics(monkeypatch, module, ("ai_tech", "job_hunting", "social"))
+    monkeypatch.setattr(
+        module, "generate", lambda topic, today: NewsResult(topic=topic, items=items(5))
+    )
 
     # Act
     message = module.collect(TODAY)
 
     # Assert
-    assert "ai_tech:1件" in message
-    assert "job_hunting:1件" in message
+    assert "ai_tech:5件" in message
+    assert "job_hunting:5件" in message
+    assert "social:5件" in message
 
 
-def test_予算を使い切ったら残りを飛ばす(collector, monkeypatch) -> None:
-    # Arrange: 1件目の生成で予算を超過したことにする
-    module, _ = collector
+def test_ジャンルは同時に走る(collector, monkeypatch) -> None:
+    # Arrange: 3ジャンルが順番ではなく重なって実行されることを確認する
+    module = collector
+    set_topics(monkeypatch, module, ("ai_tech", "job_hunting", "social"))
+
+    running = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def slow(topic, today):
+        nonlocal running, peak
+        with lock:
+            running += 1
+            peak = max(peak, running)
+        time.sleep(0.2)
+        with lock:
+            running -= 1
+        return NewsResult(topic=topic, items=items(1))
+
+    monkeypatch.setattr(module, "generate", slow)
+
+    # Act
+    module.collect(TODAY)
+
+    # Assert: 逐次なら peak は1のまま
+    assert peak > 1
+
+
+def test_同時実行数に上限がある(collector, monkeypatch) -> None:
+    # Arrange: claude -p を無制限に並べるとPCが厳しいので上限を守る
+    module = collector
+    set_topics(monkeypatch, module, ("ai_tech", "job_hunting", "social", "domestic", "world"))
+
+    running = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def slow(topic, today):
+        nonlocal running, peak
+        with lock:
+            running += 1
+            peak = max(peak, running)
+        time.sleep(0.1)
+        with lock:
+            running -= 1
+        return NewsResult(topic=topic, items=items(1))
+
+    monkeypatch.setattr(module, "generate", slow)
+
+    # Act
+    module.collect(TODAY)
+
+    # Assert
+    assert peak <= module.MAX_CONCURRENT
+
+
+def test_1ジャンルが例外を投げても他は保存される(collector, monkeypatch) -> None:
+    # Arrange
+    module = collector
     set_topics(monkeypatch, module, ("ai_tech", "job_hunting"))
 
-    clock = itertools.chain([0.0, 0.0, module.TOTAL_BUDGET_SEC + 1])
-    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
-    monkeypatch.setattr(module, "generate", lambda topic, today: one_item(topic))
+    def flaky(topic, today):
+        if topic == "ai_tech":
+            raise RuntimeError("claude down")
+        return NewsResult(topic=topic, items=items(2))
+
+    monkeypatch.setattr(module, "generate", flaky)
 
     # Act
     message = module.collect(TODAY)
 
-    # Assert: 取れた分は残り、飛ばしたことも報告される
-    assert "ai_tech:1件" in message
-    assert "時間切れで省略: job_hunting" in message
+    # Assert
+    assert "ai_tech" not in message
+    assert "job_hunting:2件" in message
 
 
 def test_一部が空でも他のジャンルは保存される(collector, monkeypatch) -> None:
     # Arrange
-    module, db_path = collector
+    module = collector
     set_topics(monkeypatch, module, ("ai_tech", "job_hunting"))
     monkeypatch.setattr(
         module,
         "generate",
         lambda topic, today: NewsResult(topic=topic, items=())
         if topic == "ai_tech"
-        else one_item(topic),
+        else NewsResult(topic=topic, items=items(1)),
     )
 
     # Act
@@ -98,7 +163,7 @@ def test_一部が空でも他のジャンルは保存される(collector, monke
 
 def test_全滅しても例外にしない(collector, monkeypatch) -> None:
     # Arrange
-    module, _ = collector
+    module = collector
     set_topics(monkeypatch, module, ("ai_tech",))
     monkeypatch.setattr(
         module, "generate", lambda topic, today: NewsResult(topic=topic, items=())
@@ -108,30 +173,29 @@ def test_全滅しても例外にしない(collector, monkeypatch) -> None:
     assert module.collect(TODAY) == "ニュースを取得できませんでした"
 
 
-def test_最悪の所要時間がタスクの実行上限に収まる() -> None:
-    # Arrange: タスクスケジューラの ExecutionTimeLimit は15分。
-    # 予算の判定はジャンルを始める前に行うため、予算ぎりぎりで始まった最後の1件は
-    # さらに NEWS_TIMEOUT_SEC まで走りうる。その分を必ず数に入れる。
+def test_ジャンル未設定でも落ちない(collector, monkeypatch) -> None:
+    # Arrange
+    module = collector
+    set_topics(monkeypatch, module, ())
+
+    # Act / Assert
+    assert module.collect(TODAY) == "対象ジャンルが設定されていません"
+
+
+def test_全ジャンルを選んでも朝のジョブが上限に収まる() -> None:
+    # Arrange: 設定できる全ジャンルを有効にした最悪の場合を見る。
+    # 同時実行なので、所要時間はジャンル数ではなく「波の数」で決まる。
+    from companion.config import VALID_NEWS_TOPICS
     from companion.services.briefing import BRIEFING_TIMEOUT_SEC
     from companion.services.news import NEWS_TIMEOUT_SEC
 
-    task_limit_sec = 15 * 60
-    overhead_sec = 60  # カレンダー同期・DB書き込み・通知
+    overhead_sec = 60  # バックアップ・カレンダー同期・DB書き込み・通知
 
     # Act
-    worst_case = (
-        news_digest.TOTAL_BUDGET_SEC + NEWS_TIMEOUT_SEC + BRIEFING_TIMEOUT_SEC + overhead_sec
-    )
+    waves = math.ceil(len(VALID_NEWS_TOPICS) / news_digest.MAX_CONCURRENT)
+    worst_case = waves * NEWS_TIMEOUT_SEC + BRIEFING_TIMEOUT_SEC + overhead_sec
 
     # Assert
-    assert worst_case < task_limit_sec, (
-        f"最悪 {worst_case}秒 かかりうるが、タスクの上限は {task_limit_sec}秒"
+    assert worst_case < TASK_LIMIT_SEC, (
+        f"最悪 {worst_case}秒 かかりうるが、タスクの上限は {TASK_LIMIT_SEC}秒"
     )
-
-
-def test_予算は通常の収集を打ち切らない長さがある() -> None:
-    # Arrange: 実測は1ジャンル120〜180秒。2ジャンルが普通に終わる余地を残す。
-    typical_per_topic_sec = 180
-
-    # Act / Assert: 1ジャンル目が遅くても2ジャンル目に入れること
-    assert news_digest.TOTAL_BUDGET_SEC > typical_per_topic_sec
