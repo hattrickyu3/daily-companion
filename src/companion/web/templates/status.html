@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}状態 — daily-companion{% endblock %}
+
+{% block content %}
+<h2>各ジョブの最終実行</h2>
+{% if not latest %}
+<div class="card"><p class="muted" style="margin:0">まだジョブが実行されていません。</p></div>
+{% endif %}
+{% for run in latest %}
+<div class="card">
+  <p style="margin:0 0 2px">
+    <strong>{{ run.job_name }}</strong>
+    <span class="small" style="color:{% if run.is_success %}var(--accent){% else %}#d04a3a{% endif %}">
+      {{ "成功" if run.is_success else "失敗" }}
+    </span>
+  </p>
+  <p class="muted small" style="margin:0">
+    {{ run.ran_at.strftime("%m/%d %H:%M") }}
+    {% if run.duration_label %} / {{ run.duration_label }}{% endif %}
+  </p>
+  {% if run.message %}<p class="small" style="margin:4px 0 0">{{ run.message }}</p>{% endif %}
+</div>
+{% endfor %}
+
+{% if history %}
+<h2>実行履歴</h2>
+<div class="card">
+  <ul class="events">
+    {% for run in history %}
+    <li>
+      <span class="time small">{{ run.ran_at.strftime("%m/%d %H:%M") }}</span>
+      <span class="small">
+        {{ run.job_name }}
+        <span style="color:{% if run.is_success %}var(--muted){% else %}#d04a3a{% endif %}">
+          {{ run.message or ("成功" if run.is_success else "失敗") }}
+        </span>
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block footer %}時刻は日本時間で表示しています{% endblock %}

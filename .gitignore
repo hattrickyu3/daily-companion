@@ -1,0 +1,28 @@
+# 認証情報 - 絶対にコミットしない
+# ディレクトリごと除外(credentials/)にすると中身を ! で戻せないため、
+# credentials/* と書いて .gitkeep だけを追跡対象に残す。
+.env
+credentials/*
+!credentials/.gitkeep
+
+# データベースとバックアップ（個人の日記そのもの）
+data/*
+!data/.gitkeep
+
+# ログ
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS / エディタ
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

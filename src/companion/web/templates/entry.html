@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{{ day.isoformat() }} — daily-companion{% endblock %}
+
+{% block head %}
+{# 整理が終わると内容が変わるので、終わるまでだけ自動で読み直す #}
+{% if entry and not entry.is_structured %}<meta http-equiv="refresh" content="5">{% endif %}
+{% endblock %}
+
+{% block content %}
+<p class="date">{{ day.strftime("%Y年%m月%d日 (%a)") }}</p>
+
+{% if not entry %}
+<div class="card">
+  <p class="muted" style="margin:0">この日の日記はまだありません。</p>
+</div>
+{% else %}
+
+{% if entry.is_structured %}
+<div class="card">
+  <p style="margin:0 0 2px"><strong>{{ entry.summary }}</strong></p>
+  {% if entry.mood %}<p class="muted small" style="margin:0">気分: {{ entry.mood }}</p>{% endif %}
+  {% if entry.tags %}
+  <div class="tags">
+    {% for tag in entry.tags %}<a class="tag" href="/entries?tag={{ tag }}">{{ tag }}</a>{% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+{% if entry.done %}
+<h2>やったこと</h2>
+<div class="card"><ul class="plain">{% for item in entry.done %}<li>{{ item }}</li>{% endfor %}</ul></div>
+{% endif %}
+
+{% if entry.insights %}
+<h2>気づき</h2>
+<div class="card"><ul class="plain">{% for item in entry.insights %}<li>{{ item }}</li>{% endfor %}</ul></div>
+{% endif %}
+
+{% if entry.carry_over %}
+<h2>明日への申し送り</h2>
+<div class="card"><p style="margin:0">{{ entry.carry_over }}</p></div>
+{% endif %}
+
+{% else %}
+<div class="card pending">
+  <p style="margin:0">Claudeが整理しています…</p>
+  <p class="muted small" style="margin:4px 0 0">数十秒かかります。この画面は自動で更新されます。</p>
+</div>
+{% endif %}
+
+<h2>書いた内容</h2>
+<div class="card"><p class="raw" style="margin:0">{{ entry.raw_text }}</p></div>
+{% endif %}
+
+{% if events %}
+<h2>この日の予定</h2>
+<div class="card">
+  <ul class="events">
+    {% for event in events %}
+    <li><span class="time">{{ event.time_label() }}</span><span>{{ event.title }}</span></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="pager">
+  <a href="/entries/{{ prev_day.isoformat() }}">← {{ prev_day.strftime("%m/%d") }}</a>
+  <a href="/entries">一覧</a>
+  <a href="/entries/{{ next_day.isoformat() }}">{{ next_day.strftime("%m/%d") }} →</a>
+</div>
+{% endblock %}

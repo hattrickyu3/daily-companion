@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}今日 — daily-companion{% endblock %}
+
+{% block content %}
+<p class="date">{{ day.strftime("%Y年%m月%d日") }}</p>
+
+{% if briefing %}
+<h2>今朝のブリーフィング</h2>
+<div class="card"><p class="raw" style="margin:0">{{ briefing.body }}</p></div>
+{% endif %}
+
+<h2>今日の予定</h2>
+<div class="card">
+  {% if events %}
+  <ul class="events">
+    {% for event in events %}
+    <li>
+      <span class="time">{{ event.time_label() }}</span>
+      <span>{{ event.title }}{% if event.location %}<span class="muted small"> / {{ event.location }}</span>{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted small" style="margin:0">予定はありません。</p>
+  {% endif %}
+</div>
+
+<h2>{% if entry %}今日の日記（保存済み）{% else %}今日は何をしましたか{% endif %}</h2>
+<form action="/entries" method="post">
+  <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+  <textarea name="raw_text" placeholder="思いつくまま書いてください。整理はClaudeがやります。"
+            autocapitalize="sentences">{{ entry.raw_text if entry else "" }}</textarea>
+  <button type="submit">{% if entry %}書き直して保存{% else %}保存する{% endif %}</button>
+</form>
+{% if entry %}
+<p class="muted small">書き直すと、前の要約とタグは作り直されます。</p>
+{% endif %}
+
+{% if digests %}
+{% for digest in digests %}
+<h2>ニュース — {{ topic_label(digest.topic) }}</h2>
+<div class="card">
+  {% if digest.sources %}
+  <ul class="plain" style="padding-left:0; list-style:none; margin:0">
+    {% for source in digest.sources %}
+    <li style="margin-bottom:{{ '0' if loop.last else '16px' }}">
+      <a href="{{ source.url }}" target="_blank" rel="noopener noreferrer"
+         style="color:var(--accent); text-decoration:none">{{ source.title }} ↗</a>
+      {% if source.summary %}
+      <p class="small muted" style="margin:2px 0 0">{{ source.summary }}</p>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="raw small muted" style="margin:0">{{ digest.body }}</p>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if recent %}
+<h2>最近の日記</h2>
+{% for e in recent %}
+<a class="entry-link" href="/entries/{{ e.entry_date.isoformat() }}">
+  <div class="card">
+    <p class="date small" style="margin:0 0 4px">{{ e.entry_date.strftime("%m/%d (%a)") }}</p>
+    <p style="margin:0">{{ e.summary or (e.raw_text[:60] ~ "…") }}</p>
+  </div>
+</a>
+{% endfor %}
+{% endif %}
+{% endblock %}

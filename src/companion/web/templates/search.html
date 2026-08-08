@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}検索 — daily-companion{% endblock %}
+
+{% block content %}
+<form action="/search" method="get">
+  <input type="search" name="q" value="{{ query }}" placeholder="日記を検索" autofocus>
+</form>
+
+{% if query %}
+<h2>「{{ query }}」の検索結果</h2>
+{% if not results %}
+<div class="card"><p class="muted" style="margin:0">見つかりませんでした。</p></div>
+{% endif %}
+{% for entry in results %}
+<a class="entry-link" href="/entries/{{ entry.entry_date.isoformat() }}">
+  <div class="card">
+    <p class="date small" style="margin:0 0 4px">{{ entry.entry_date.strftime("%Y/%m/%d (%a)") }}</p>
+    <p style="margin:0">{{ entry.summary or entry.raw_text[:70] }}</p>
+  </div>
+</a>
+{% endfor %}
+{% endif %}
+{% endblock %}
+
+{% block footer %}{% if query %}{{ results|length }}件{% endif %}{% endblock %}

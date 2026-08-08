@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}日記 — daily-companion{% endblock %}
+
+{% block content %}
+{% if tags %}
+<div class="tags" style="margin-bottom:18px">
+  <a class="tag" href="/entries" {% if not active_tag %}style="outline:1px solid var(--accent)"{% endif %}>すべて</a>
+  {% for name, count in tags %}
+  <a class="tag" href="/entries?tag={{ name }}"
+     {% if active_tag == name %}style="outline:1px solid var(--accent)"{% endif %}>{{ name }} {{ count }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if not entries %}
+<div class="card">
+  <p class="muted" style="margin:0">
+    {% if active_tag %}このタグの日記はありません。{% else %}まだ日記がありません。<a href="/">今日の分</a>から書いてみてください。{% endif %}
+  </p>
+</div>
+{% endif %}
+
+{% for entry in entries %}
+<a class="entry-link" href="/entries/{{ entry.entry_date.isoformat() }}">
+  <div class="card">
+    <p class="date small" style="margin:0 0 4px">{{ entry.entry_date.strftime("%Y/%m/%d (%a)") }}</p>
+    <p style="margin:0">
+      {% if entry.summary %}{{ entry.summary }}
+      {% else %}<span class="muted">{{ entry.raw_text[:70] }}{% if entry.raw_text|length > 70 %}…{% endif %}</span>
+      {% endif %}
+    </p>
+    {% if entry.tags %}
+    <div class="tags">{% for tag in entry.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</div>
+    {% endif %}
+  </div>
+</a>
+{% endfor %}
+{% endblock %}
+
+{% block footer %}{{ entries|length }}件{% endblock %}

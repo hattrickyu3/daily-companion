@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>{% block title %}daily-companion{% endblock %}</title>
+{% block head %}{% endblock %}
+<style>
+  :root {
+    --bg: #fbfaf8; --card: #ffffff; --text: #23201d; --muted: #6f6a64;
+    --line: #e5e1db; --accent: #b4643c; --accent-soft: #f6ece6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17161a; --card: #201f24; --text: #ece9e4; --muted: #a09a92;
+      --line: #33313a; --accent: #e0885c; --accent-soft: #2c2530;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    line-height: 1.7; font-size: 16px;
+    padding: 0 16px calc(32px + env(safe-area-inset-bottom));
+  }
+  .wrap { max-width: 680px; margin: 0 auto; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 18px 0 14px; border-bottom: 1px solid var(--line); margin-bottom: 20px;
+  }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .02em; }
+  header h1 a { color: var(--text); text-decoration: none; }
+  nav { display: flex; gap: 14px; font-size: 14px; }
+  nav a { color: var(--muted); text-decoration: none; }
+  nav a:hover, nav a.on { color: var(--accent); }
+  h2 { font-size: 15px; color: var(--muted); font-weight: 600; margin: 26px 0 10px; letter-spacing: .04em; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px; margin-bottom: 12px;
+  }
+  .muted { color: var(--muted); }
+  .small { font-size: 14px; }
+  textarea {
+    width: 100%; min-height: 180px; padding: 14px; font: inherit; line-height: 1.7;
+    color: var(--text); background: var(--card);
+    border: 1px solid var(--line); border-radius: 12px; resize: vertical;
+  }
+  textarea:focus, input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button {
+    font: inherit; font-weight: 600; padding: 13px 22px; border: none; border-radius: 10px;
+    background: var(--accent); color: #fff; cursor: pointer; width: 100%; margin-top: 12px;
+  }
+  input[type="search"] {
+    width: 100%; padding: 12px 14px; font: inherit; color: var(--text);
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  }
+  ul.events { list-style: none; padding: 0; margin: 0; }
+  ul.events li { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  ul.events li:last-child { border-bottom: none; }
+  ul.events .time { color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 92px; }
+  ul.plain { margin: 0; padding-left: 1.2em; }
+  ul.plain li { margin: 3px 0; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .tag {
+    font-size: 13px; padding: 3px 10px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); text-decoration: none;
+  }
+  .entry-link { display: block; text-decoration: none; color: inherit; }
+  .entry-link:hover .card { border-color: var(--accent); }
+  .date { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .raw { white-space: pre-wrap; word-break: break-word; }
+  .pager { display: flex; justify-content: space-between; margin-top: 22px; font-size: 14px; }
+  .pager a { color: var(--muted); text-decoration: none; }
+  .pending { border-color: var(--accent); }
+  footer { margin-top: 34px; color: var(--muted); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><a href="/">daily-companion</a></h1>
+    <nav>
+      <a href="/">今日</a>
+      <a href="/entries">日記</a>
+      <a href="/search">検索</a>
+      <a href="/status">状態</a>
+    </nav>
+  </header>
+  {% block content %}{% endblock %}
+  <footer>{% block footer %}{% endblock %}</footer>
+</div>
+</body>
+</html>
