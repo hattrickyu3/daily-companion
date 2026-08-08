@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Form, Request
@@ -29,6 +29,10 @@ from companion.db.repository import (
 )
 from companion.db.reviews import list_reviews
 from companion.services.diary import append_entry, save_entry, structure_entry
+from companion.integrations.calendar_google import CalendarError
+from companion.services.event_draft import EventDraft
+from companion.services.event_draft import parse as parse_event
+from companion.services.event_register import register as register_event
 from companion.services.month_view import WEEKDAY_LABELS
 from companion.services.month_view import build as build_month
 from companion.services.month_view import parse_month
@@ -81,6 +85,16 @@ def _parse_day(value: str) -> date | None:
     """フォームから来た日付を解釈する. 不正なら None."""
     try:
         return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _parse_clock(value: str) -> time | None:
+    """フォームから来た時刻を解釈する. 空や不正なら None（終日扱い）."""
+    if not value.strip():
+        return None
+    try:
+        return time.fromisoformat(value.strip())
     except ValueError:
         return None
 
@@ -170,6 +184,58 @@ def entry_page(request: Request, entry_date: str) -> HTMLResponse:
             "next_day": day + timedelta(days=1),
         },
     )
+
+
+@app.get("/events/new", response_class=HTMLResponse)
+def new_event_page(request: Request, day: str | None = None) -> HTMLResponse:
+    """予定の入力画面. 自然言語で書いてもらう."""
+    return templates.TemplateResponse(
+        request, "event_new.html", {"day": day or today_local().isoformat()}
+    )
+
+
+@app.post("/events/parse", response_class=HTMLResponse)
+def parse_event_route(request: Request, text: str = Form(...)) -> HTMLResponse:
+    """入力をClaudeに解釈させ、確認画面を出す. ここではまだ登録しない."""
+    written = text.strip()
+    if not written:
+        return RedirectResponse("/events/new", status_code=303)
+
+    draft = parse_event(written, today_local())
+    return templates.TemplateResponse(
+        request, "event_confirm.html", {"draft": draft, "original": written}
+    )
+
+
+@app.post("/events/create")
+def create_event_route(
+    title: str = Form(...),
+    day: str = Form(...),
+    start_time: str = Form(""),
+    end_time: str = Form(""),
+    location: str = Form(""),
+) -> RedirectResponse:
+    """確認済みの内容でGoogleカレンダーに登録する."""
+    target_day = _parse_day(day)
+    name = title.strip()
+    if target_day is None or not name:
+        return RedirectResponse("/events/new?error=input", status_code=303)
+
+    draft = EventDraft(
+        title=name,
+        day=target_day,
+        start_time=_parse_clock(start_time),
+        end_time=_parse_clock(end_time),
+        location=location.strip() or None,
+    )
+
+    try:
+        register_event(draft)
+    except CalendarError as exc:
+        log.warning("event creation failed: %s", exc)
+        return RedirectResponse("/events/new?error=calendar", status_code=303)
+
+    return RedirectResponse(f"/entries/{target_day.isoformat()}", status_code=303)
 
 
 @app.get("/calendar", response_class=HTMLResponse)

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}予定の確認 — daily-companion{% endblock %}
+
+{% block content %}
+{% if not draft %}
+<h2>読み取れませんでした</h2>
+<div class="card">
+  <p style="margin:0">「{{ original }}」から日付を特定できませんでした。</p>
+  <p class="muted small" style="margin:6px 0 0">
+    日付をはっきり書くと読み取れます。例:「8月20日 10時 ゼミ」「明日 15:00 面接」
+  </p>
+</div>
+<p style="margin-top:16px"><a href="/events/new">入力に戻る</a></p>
+
+{% else %}
+<h2>この内容で登録しますか</h2>
+
+<div class="card">
+  <p style="margin:0 0 2px"><strong>{{ draft.title }}</strong></p>
+  <p class="muted small" style="margin:0">{{ draft.label() }}</p>
+  {% if draft.location %}<p class="muted small" style="margin:2px 0 0">{{ draft.location }}</p>{% endif %}
+</div>
+
+<p class="muted small">入力: 「{{ original }}」</p>
+
+<h2>間違っていれば直せます</h2>
+<form action="/events/create" method="post">
+  <div class="card">
+    <label class="small muted" for="title">件名</label>
+    <input type="text" id="title" name="title" value="{{ draft.title }}" required
+           style="width:100%; padding:10px; font:inherit; color:var(--text);
+                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
+                  margin:4px 0 12px">
+
+    <label class="small muted" for="day">日付</label>
+    <input type="date" id="day" name="day" value="{{ draft.day.isoformat() }}" required
+           style="width:100%; padding:10px; font:inherit; color:var(--text);
+                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
+                  margin:4px 0 12px">
+
+    <label class="small muted" for="start_time">開始（空にすると終日）</label>
+    <input type="time" id="start_time" name="start_time"
+           value="{{ draft.start_time.strftime('%H:%M') if draft.start_time else '' }}"
+           style="width:100%; padding:10px; font:inherit; color:var(--text);
+                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
+                  margin:4px 0 12px">
+
+    <label class="small muted" for="end_time">終了（空にすると1時間）</label>
+    <input type="time" id="end_time" name="end_time"
+           value="{{ draft.end_time.strftime('%H:%M') if draft.end_time else '' }}"
+           style="width:100%; padding:10px; font:inherit; color:var(--text);
+                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
+                  margin:4px 0 12px">
+
+    <label class="small muted" for="location">場所</label>
+    <input type="text" id="location" name="location" value="{{ draft.location or '' }}"
+           style="width:100%; padding:10px; font:inherit; color:var(--text);
+                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
+                  margin:4px 0 0">
+  </div>
+
+  <button type="submit">Googleカレンダーに登録する</button>
+</form>
+
+<p style="margin-top:16px"><a href="/events/new" class="muted small">やめて入力に戻る</a></p>
+{% endif %}
+{% endblock %}

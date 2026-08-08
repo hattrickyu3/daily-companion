@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}予定を追加 — daily-companion{% endblock %}
+
+{% block content %}
+<h2>予定を追加</h2>
+
+{% if request.query_params.get("error") == "calendar" %}
+<div class="card" style="border-color:#d04a3a">
+  <p style="margin:0">Googleカレンダーへの登録に失敗しました。</p>
+  <p class="muted small" style="margin:4px 0 0">
+    カレンダーの共有権限が「予定の変更権限」になっているか確認してください。
+  </p>
+</div>
+{% elif request.query_params.get("error") == "input" %}
+<div class="card" style="border-color:#d04a3a">
+  <p style="margin:0">件名と日付は必要です。</p>
+</div>
+{% endif %}
+
+<form action="/events/parse" method="post">
+  <textarea name="text" style="min-height:110px" autocapitalize="sentences" autofocus
+            placeholder="明日10時から12時までゼミ&#10;来週の月曜 15:00 面接 渋谷&#10;8/20 終日 合宿"></textarea>
+  <button type="submit">内容を確認する</button>
+</form>
+
+<p class="muted small">
+  そのまま登録はしません。Claudeが読み取った日付と時刻を確認画面で見せるので、
+  間違っていればそこで直せます。
+</p>
+{% endblock %}

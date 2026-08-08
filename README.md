@@ -6,7 +6,7 @@
 - **DB**: SQLite（`data/companion.db`）
 - **AI**: `claude -p` ヘッドレス実行
 - **通知**: [ntfy.sh](https://ntfy.sh) によるスマホPush
-- **カレンダー**: Googleカレンダー（Calendar API / サービスアカウント認証）
+- **カレンダー**: Googleカレンダー（Calendar API / サービスアカウント認証・読み書き）
 
 詳細は [要件定義書](docs/requirements.md) を参照。
 
@@ -24,6 +24,7 @@
 |---|---|
 | `/` | 今朝のブリーフィング、今日の予定、日記の入力、ニュース |
 | `/calendar` | 月カレンダー。日記の有無と予定の件数を一覧し、日付から詳細へ |
+| `/events/new` | 予定の追加。「明日10時からゼミ」と書くとClaudeが解釈し、確認後にGoogleカレンダーへ登録 |
 | `/entries/{日付}` | その日の日記・予定。書き足しと、過去日の記入もここから |
 | `/entries` | 日記の一覧。タグで絞り込める |
 | `/reviews` | 週次レポート |

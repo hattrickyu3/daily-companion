@@ -222,6 +222,51 @@ def fetch_sync_window(today: date) -> list[CalendarEvent]:
     return fetch_events_safe(today - delta, today + delta)
 
 
+def default_calendar_id() -> str:
+    """書き込み先のカレンダーID.
+
+    .env で明示されていればその先頭、なければ共有されている最初のカレンダー。
+    書き込み先が決まらない状態で黙って別の場所に作らないよう、見つからなければ失敗させる。
+    """
+    configured = get_config().google_calendar_ids
+    if configured:
+        return configured[0]
+
+    calendars = list_calendars()
+    if not calendars:
+        raise CalendarError(
+            "書き込み先のカレンダーが見つかりません。"
+            ".env の GOOGLE_CALENDAR_IDS を設定してください。"
+        )
+    return calendars[0][0]
+
+
+def create_all_day_event(
+    calendar_id: str, title: str, day: date, *, location: str | None = None
+) -> str:
+    """終日予定を1件作成し、そのIDを返す.
+
+    Google Calendar APIの終日予定は end が翌日になる（排他的）ため、+1日する。
+    """
+    service = _build_service()
+    body: dict = {
+        "summary": title,
+        "start": {"date": day.isoformat()},
+        "end": {"date": (day + timedelta(days=1)).isoformat()},
+    }
+    if location:
+        body["location"] = location
+
+    try:
+        created = service.events().insert(calendarId=calendar_id, body=body).execute()
+    except HttpError as exc:
+        raise CalendarError(
+            f"予定の作成に失敗しました: {exc}\n"
+            "カレンダーの共有権限が「予定の変更権限」になっているか確認してください。"
+        ) from exc
+    return created.get("id", "")
+
+
 def create_event(
     calendar_id: str,
     title: str,
@@ -231,9 +276,8 @@ def create_event(
     location: str | None = None,
     description: str | None = None,
 ) -> str:
-    """予定を1件作成し、そのIDを返す.
+    """時刻つきの予定を1件作成し、そのIDを返す.
 
-    Phase 1では未使用。日記から予定を登録する機能（Phase 4以降）で使う。
     サービスアカウントからのゲスト招待はドメイン全体の委任が必要なため、
     ここでは招待者なしの予定のみを想定している。
     """
