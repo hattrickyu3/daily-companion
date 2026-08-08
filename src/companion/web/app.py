@@ -27,6 +27,7 @@ from companion.db.repository import (
     list_entries,
     search_entries,
 )
+from companion.db.reviews import list_reviews
 from companion.services.diary import save_entry, structure_entry
 from companion.services.news import topic_label
 from companion.services.schedule import get_events_for
@@ -130,6 +131,15 @@ def entry_page(request: Request, entry_date: str) -> HTMLResponse:
             "next_day": day + timedelta(days=1),
         },
     )
+
+
+@app.get("/reviews", response_class=HTMLResponse)
+def reviews_page(request: Request) -> HTMLResponse:
+    """週次レポートの一覧."""
+    with session() as conn:
+        reviews = list_reviews(conn)
+
+    return templates.TemplateResponse(request, "reviews.html", {"reviews": reviews})
 
 
 @app.get("/status", response_class=HTMLResponse)

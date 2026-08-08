@@ -16,7 +16,7 @@ from datetime import date, timedelta
 from companion.db.events import list_events_for
 from companion.db.repository import Entry, get_entry
 from companion.integrations.calendar_google import CalendarEvent
-from companion.integrations.claude_runner import ClaudeError, run_claude
+from companion.integrations.claude_runner import ClaudeError, run_claude, strip_markdown_headings
 
 log = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ def generate(conn: sqlite3.Connection, today: date) -> str:
         log.warning("briefing generation failed, using fallback: %s", exc)
         return build_fallback(events, yesterday is None)
 
-    body = result.text.strip()
+    body = strip_markdown_headings(result.text.strip()).strip()
     if not body:
         log.warning("briefing generation returned empty text, using fallback")
         return build_fallback(events, yesterday is None)

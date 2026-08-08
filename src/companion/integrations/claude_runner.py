@@ -99,6 +99,18 @@ def run_claude(
     return ClaudeResult(text=payload.get("result") or "", session_id=payload.get("session_id"))
 
 
+def strip_markdown_headings(text: str) -> str:
+    """行頭の見出し記号(#)を落とす.
+
+    プレーンテキストとして表示する画面では「# 今週の傾向」のように記号が見えてしまう。
+    プロンプトで禁じても付いてくることがあるので、表示前に必ずここを通す。
+    箇条書きの「- 」は読みやすさに寄与するので残す。
+    """
+    lines = [line.lstrip("#").lstrip() if line.lstrip().startswith("#") else line
+             for line in text.splitlines()]
+    return "\n".join(lines)
+
+
 def extract_json_block(text: str) -> dict | None:
     """Claudeの応答からJSONオブジェクトを取り出す.
 

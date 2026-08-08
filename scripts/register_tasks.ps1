@@ -13,8 +13,9 @@ $root = Split-Path -Parent $PSScriptRoot
 $user = "$env:USERDOMAIN\$env:USERNAME"
 
 $jobs = @(
-    @{ Name = 'daily-companion-morning'; Script = 'morning_brief.bat';   Time = '07:30'; Desc = '朝のブリーフィング' }
+    @{ Name = 'daily-companion-morning'; Script = 'morning_brief.bat';  Time = '07:30'; Desc = '朝のブリーフィング' }
     @{ Name = 'daily-companion-evening'; Script = 'evening_prompt.bat'; Time = '22:00'; Desc = '夜の日記催促' }
+    @{ Name = 'daily-companion-weekly';  Script = 'weekly_review.bat';  Time = '21:00'; Desc = '週次の振り返り'; Weekly = 'Sunday' }
 )
 
 foreach ($job in $jobs) {
@@ -26,7 +27,11 @@ foreach ($job in $jobs) {
     $action = New-ScheduledTaskAction -Execute 'cmd.exe' `
         -Argument "/c `"$batPath`"" -WorkingDirectory $root
 
-    $trigger = New-ScheduledTaskTrigger -Daily -At $job.Time
+    if ($job.Weekly) {
+        $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $job.Weekly -At $job.Time
+    } else {
+        $trigger = New-ScheduledTaskTrigger -Daily -At $job.Time
+    }
 
     # S4U: パスワードなしで、ログインしていなくても実行する。
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType S4U -RunLevel Limited
@@ -43,7 +48,8 @@ foreach ($job in $jobs) {
     Register-ScheduledTask -TaskName $job.Name -Action $action -Trigger $trigger `
         -Principal $principal -Settings $settings -Description $job.Desc -Force | Out-Null
 
-    Write-Host "登録しました: $($job.Name)  毎日 $($job.Time)  $($job.Desc)"
+    $schedule = if ($job.Weekly) { "毎週$($job.Weekly)" } else { '毎日' }
+    Write-Host "登録しました: $($job.Name)  $schedule $($job.Time)  $($job.Desc)"
 }
 
 Write-Host ''
