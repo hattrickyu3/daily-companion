@@ -28,7 +28,9 @@ GOOGLE_CALENDAR_SCOPES = ("https://www.googleapis.com/auth/calendar",)
 DEFAULT_CLAUDE_TIMEOUT_SEC = 300
 DEFAULT_WEB_PORT = 8765
 CALENDAR_SYNC_WINDOW_DAYS = 7
-BACKUP_GENERATIONS = 4
+# 日次バックアップを1週間分保つ。DBは数百KBなので世代を増やしても負担にならず、
+# 「おかしくなったのが数日前」に気づいても戻せる余地が残る。
+BACKUP_GENERATIONS = 7
 
 VALID_NEWS_TOPICS = ("ai_tech", "job_hunting", "domestic", "world")
 

@@ -42,22 +42,43 @@ uv run python -m companion.db.init
 uv run python -m companion.doctor
 ```
 
-Webアプリを起動します（`scripts/start_web.bat` をダブルクリックでも可）。
-
-```bash
-uv run python -m companion.web.serve
-```
-
-定期ジョブを自動起動するには、**管理者PowerShell**で登録します。
+**管理者PowerShell**でタスクスケジューラに登録します。これでWebアプリの常駐と定期ジョブが動き出します。
 
 ```bash
 powershell -ExecutionPolicy Bypass -File scripts\register_tasks.ps1
 ```
 
-各ジョブは手動でも実行できます。
+登録されるタスク:
+
+| タスク | タイミング | 内容 |
+|---|---|---|
+| `daily-companion-web` | PC起動時 | Webアプリの常駐（落ちたら10秒後に自動再起動） |
+| `daily-companion-morning` | 毎日 07:30 | バックアップ → 予定同期 → ニュース → ブリーフィング |
+| `daily-companion-evening` | 毎日 22:00 | 日記の催促（記録済みの日は送らない） |
+| `daily-companion-weekly` | 毎週日曜 21:00 | 週次の振り返り |
+
+いずれもS4Uログオンなので、Windowsにログインしていなくても動きます。
+PCが落ちて実行時刻を逃した場合は、起動後に追いかけて実行されます。
+
+手動で起動・停止・実行することもできます。
 
 ```bash
 uv run python -m companion.jobs.morning_brief
+```
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\stop_web.ps1
+```
+
+## バックアップ
+
+朝のジョブが毎日 `data/backups/companion-YYYYMMDD.db` を作り、7世代を保ちます。
+SQLiteのオンラインバックアップAPIを使うので、書き込み中でも取りこぼしません。
+
+戻すときは、Webアプリを止めてからファイルを差し替えます。
+
+```bash
+copy data\backups\companion-20260808.db data\companion.db
 ```
 
 ## 開発状況
@@ -69,4 +90,4 @@ uv run python -m companion.jobs.morning_brief
 | 2 | カレンダー同期と朝のブリーフィング | 完了 |
 | 3 | ニュース要約 | 完了 |
 | 4 | 週次レポート・全文検索 | 完了 |
-| 5 | 自動バックアップ・常駐化 | 未着手 |
+| 5 | 自動バックアップ・常駐化 | 完了 |

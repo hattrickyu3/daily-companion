@@ -2,11 +2,12 @@
 
     uv run python -m companion.jobs.morning_brief
 
-毎朝7:30に実行する。処理は4段階で、前の段が失敗しても次に進む。
-  1. Googleカレンダーをローカルに同期（失敗してもキャッシュで続行）
-  2. ニュースを収集（失敗しても続行）
-  3. Claudeにブリーフィングを書かせる（失敗しても予定の一覧だけは出す）
-  4. DBに保存してntfyで通知
+毎朝7:30に実行する。処理は5段階で、前の段が失敗しても次に進む。
+  1. DBをバックアップ（失敗しても続行）
+  2. Googleカレンダーをローカルに同期（失敗してもキャッシュで続行）
+  3. ニュースを収集（失敗しても続行）
+  4. Claudeにブリーフィングを書かせる（失敗しても予定の一覧だけは出す）
+  5. DBに保存してntfyで通知
 
 ニュース収集をこのジョブに含めているのは、朝の通知を1回にまとめるため。
 通知が朝に2回鳴ると、それ自体が無視される原因になる。
@@ -22,6 +23,7 @@ from companion.db.briefings import save_briefing
 from companion.db.connection import session
 from companion.db.news import list_digests_for
 from companion.integrations.notify import send_notification
+from companion.jobs.backup import run as backup_run
 from companion.jobs.base import run_job
 from companion.jobs.news_digest import collect
 from companion.services.briefing import generate
@@ -38,6 +40,15 @@ MAX_HEADLINES = 3
 def app_url(path: str = "/") -> str:
     """通知からタップして開くURL."""
     return f"http://{local_ip()}:{get_config().web_port}{path}"
+
+
+def backup_safely() -> str:
+    """バックアップを取る. 失敗しても朝の通知は止めない."""
+    try:
+        return backup_run()
+    except Exception as exc:  # noqa: BLE001 - バックアップの失敗で通知を落としたくない
+        log.warning("backup failed, continuing: %s", exc)
+        return "バックアップ失敗"
 
 
 def collect_news_safely(day) -> str:
@@ -70,6 +81,9 @@ def run() -> str:
     """ブリーフィングを作って通知する. 実行結果のメッセージを返す."""
     day = today_local()
 
+    # 1日の最初に、前日までの内容を確実に控えておく。
+    backup_note = backup_safely()
+
     with session() as conn:
         sync = sync_window(conn, day)
 
@@ -87,7 +101,7 @@ def run() -> str:
         tags=["sunrise"],
         click_url=app_url("/"),
     )
-    return f"ブリーフィングを送信（{sync.describe()} / {news_note}）"
+    return f"ブリーフィングを送信（{backup_note} / {sync.describe()} / {news_note}）"
 
 
 def main() -> int:
