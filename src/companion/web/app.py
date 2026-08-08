@@ -33,9 +33,10 @@ from companion.integrations.calendar_google import CalendarError
 from companion.services.event_draft import EventDraft
 from companion.services.event_draft import parse as parse_event
 from companion.services.event_register import register as register_event
+from companion.services.calendar_sync import refresh_if_stale as refresh_calendar
 from companion.services.month_view import WEEKDAY_LABELS
 from companion.services.month_view import build as build_month
-from companion.services.month_view import parse_month
+from companion.services.month_view import month_bounds, parse_month
 from companion.services.news import topic_label
 from companion.services.schedule import get_events_for
 
@@ -245,6 +246,9 @@ def calendar_page(request: Request, month: str | None = None) -> HTMLResponse:
     year, month_number = parse_month(month, today)
 
     with session() as conn:
+        # 定期同期の範囲外の月を見ても空にならないよう、その月を取り込み直す。
+        start, end = month_bounds(year, month_number)
+        refresh_calendar(conn, start, end)
         view = build_month(conn, year, month_number, today)
 
     return templates.TemplateResponse(

@@ -27,7 +27,11 @@ GOOGLE_CALENDAR_SCOPES = ("https://www.googleapis.com/auth/calendar",)
 
 DEFAULT_CLAUDE_TIMEOUT_SEC = 300
 DEFAULT_WEB_PORT = 8765
-CALENDAR_SYNC_WINDOW_DAYS = 7
+# 同期範囲は前後で非対称にする。予定は先にあるものを見たいので未来を長く取る。
+# 当初は前後7日だったが、月カレンダーを見るには短すぎて、
+# 2週間先の予定が画面に出てこなかった。
+CALENDAR_SYNC_PAST_DAYS = 30
+CALENDAR_SYNC_FUTURE_DAYS = 120
 # 日次バックアップを1週間分保つ。DBは数百KBなので世代を増やしても負担にならず、
 # 「おかしくなったのが数日前」に気づいても戻せる余地が残る。
 BACKUP_GENERATIONS = 7

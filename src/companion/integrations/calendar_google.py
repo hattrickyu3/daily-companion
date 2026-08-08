@@ -21,7 +21,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from companion.config import CALENDAR_SYNC_WINDOW_DAYS, GOOGLE_CALENDAR_SCOPES, get_config
+from companion.config import GOOGLE_CALENDAR_SCOPES, get_config
 
 log = logging.getLogger(__name__)
 
@@ -214,12 +214,6 @@ def fetch_events_safe(start: date, end: date) -> list[CalendarEvent]:
     except (CalendarError, HttpError) as exc:
         log.warning("calendar fetch failed, continuing without events: %s", exc)
         return []
-
-
-def fetch_sync_window(today: date) -> list[CalendarEvent]:
-    """前後 CALENDAR_SYNC_WINDOW_DAYS 日分の予定を取得する（縮退あり）."""
-    delta = timedelta(days=CALENDAR_SYNC_WINDOW_DAYS)
-    return fetch_events_safe(today - delta, today + delta)
 
 
 def default_calendar_id() -> str:

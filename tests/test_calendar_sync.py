@@ -124,8 +124,10 @@ def test_同期に成功したら件数を報告する(conn, monkeypatch) -> Non
     assert "予定1件を同期" in result.describe()
 
 
-def test_同期範囲は前後7日をカバーする(conn, monkeypatch) -> None:
-    # Arrange
+def test_同期範囲は未来を長く取る(conn, monkeypatch) -> None:
+    # Arrange: 予定は先にあるものを見たいので、前後を非対称にしている
+    from companion.config import CALENDAR_SYNC_FUTURE_DAYS, CALENDAR_SYNC_PAST_DAYS
+
     captured: dict[str, date] = {}
 
     def capture(start, end):
@@ -139,5 +141,74 @@ def test_同期範囲は前後7日をカバーする(conn, monkeypatch) -> None:
     calendar_sync.sync_window(conn, TODAY)
 
     # Assert
-    assert captured["start"] == TODAY - timedelta(days=7)
-    assert captured["end"] == TODAY + timedelta(days=7)
+    assert captured["start"] == TODAY - timedelta(days=CALENDAR_SYNC_PAST_DAYS)
+    assert captured["end"] == TODAY + timedelta(days=CALENDAR_SYNC_FUTURE_DAYS)
+
+
+def test_2週間先の予定が同期範囲に入る(conn, monkeypatch) -> None:
+    # Arrange: 前後7日だった頃、8/17のインターンが範囲外で画面に出なかった
+    captured: dict[str, date] = {}
+
+    def capture(start, end):
+        captured["start"] = start
+        captured["end"] = end
+        return []
+
+    monkeypatch.setattr(calendar_sync, "fetch_events", capture)
+
+    # Act
+    calendar_sync.sync_window(conn, date(2026, 8, 9))
+
+    # Assert
+    assert captured["end"] >= date(2026, 8, 21)
+
+
+def test_開いた月を取り込み直す(conn, monkeypatch) -> None:
+    # Arrange: 同期範囲の外の月を見ても空にならないようにする
+    calendar_sync.clear_refresh_marks()
+    calls: list[tuple[date, date]] = []
+
+    def capture(start, end):
+        calls.append((start, end))
+        return []
+
+    monkeypatch.setattr(calendar_sync, "fetch_events", capture)
+
+    # Act
+    calendar_sync.refresh_if_stale(conn, date(2026, 12, 1), date(2026, 12, 31))
+
+    # Assert
+    assert calls == [(date(2026, 12, 1), date(2026, 12, 31))]
+
+
+def test_同じ月を続けて開いても取りに行かない(conn, monkeypatch) -> None:
+    # Arrange: 画面を開くたびにAPIを叩くと表示が遅くなる
+    calendar_sync.clear_refresh_marks()
+    calls: list[tuple[date, date]] = []
+    monkeypatch.setattr(
+        calendar_sync, "fetch_events", lambda start, end: calls.append((start, end)) or []
+    )
+
+    # Act
+    for _ in range(3):
+        calendar_sync.refresh_if_stale(conn, date(2026, 12, 1), date(2026, 12, 31))
+
+    # Assert
+    assert len(calls) == 1
+
+
+def test_取り込み直しが失敗してもキャッシュを残す(conn, monkeypatch) -> None:
+    # Arrange
+    calendar_sync.clear_refresh_marks()
+    upsert_events(conn, [make_event("a", "ゼミ")])
+
+    def boom(start, end):
+        raise RuntimeError("API down")
+
+    monkeypatch.setattr(calendar_sync, "fetch_events", boom)
+
+    # Act
+    calendar_sync.refresh_if_stale(conn, TODAY, TODAY)
+
+    # Assert
+    assert len(list_events_for(conn, TODAY)) == 1
