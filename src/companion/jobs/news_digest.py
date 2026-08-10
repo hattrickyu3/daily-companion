@@ -29,9 +29,12 @@ log = logging.getLogger(__name__)
 
 JOB_NAME = "news_digest"
 
-# 同時に走らせる claude -p の数。増やすほど速くなるが、
-# 1プロセスあたりの負荷が小さくないので上限を設ける。
-MAX_CONCURRENT = 3
+# 同時に走らせる claude -p の数。
+# ジャンル数がこれを超えると2巡目が発生し、所要時間がほぼ倍になる。
+# 実際に使うジャンル数（現在4）を下回らない値にしておくこと。
+# 各プロセスはWeb検索の待ちが大半でCPUは張り付かないが、
+# 無制限に並べるとメモリと同時接続が増えるので上限自体は残す。
+MAX_CONCURRENT = 4
 
 
 def _generate_one(topic: str, today: date) -> NewsResult:

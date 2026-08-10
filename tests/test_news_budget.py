@@ -182,6 +182,20 @@ def test_ジャンル未設定でも落ちない(collector, monkeypatch) -> None
     assert module.collect(TODAY) == "対象ジャンルが設定されていません"
 
 
+def test_実際に使うジャンル数なら1巡で終わる() -> None:
+    # Arrange: 同時実行数を下回っていれば2巡目が発生しない。
+    # ここを割ると、ジャンルを1つ足しただけで所要時間がほぼ倍になる。
+    from companion.config import load_config
+
+    configured = len(load_config().news_topics)
+
+    # Act / Assert
+    assert configured <= news_digest.MAX_CONCURRENT, (
+        f"設定ジャンルが{configured}件、同時実行が{news_digest.MAX_CONCURRENT}件。"
+        "MAX_CONCURRENT を上げないと2巡目が発生する。"
+    )
+
+
 def test_全ジャンルを選んでも朝のジョブが上限に収まる() -> None:
     # Arrange: 設定できる全ジャンルを有効にした最悪の場合を見る。
     # 同時実行なので、所要時間はジャンル数ではなく「波の数」で決まる。

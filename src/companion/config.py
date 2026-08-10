@@ -36,7 +36,7 @@ CALENDAR_SYNC_FUTURE_DAYS = 120
 # 「おかしくなったのが数日前」に気づいても戻せる余地が残る。
 BACKUP_GENERATIONS = 7
 
-VALID_NEWS_TOPICS = ("ai_tech", "job_hunting", "social", "domestic", "world")
+VALID_NEWS_TOPICS = ("ai_tech", "job_hunting", "social", "economy", "domestic", "world")
 
 
 class ConfigError(Exception):
