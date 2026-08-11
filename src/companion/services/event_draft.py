@@ -96,8 +96,12 @@ class Recurrence:
             return ()
         return self.weekdays or (WEEKDAY_CODES[day.weekday()],)
 
-    def to_rrule(self, day: date) -> str:
-        """Googleカレンダーに渡す RRULE 文字列を組み立てる."""
+    def to_rrule(self, day: date, *, all_day: bool = False) -> str:
+        """Googleカレンダーに渡す RRULE 文字列を組み立てる.
+
+        UNTIL の書式は開始側の型に合わせる必要がある（RFC 5545）。
+        終日予定は日付だけ、時刻つきは日時で書かないと弾かれる。
+        """
         parts = [f"FREQ={self.freq}"]
         if self.interval > 1:
             parts.append(f"INTERVAL={self.interval}")
@@ -105,8 +109,9 @@ class Recurrence:
         if weekdays:
             parts.append(f"BYDAY={','.join(weekdays)}")
         if self.until is not None:
-            # UNTIL は排他ではないが、その日の終わりまでを含める指定にする。
-            parts.append(f"UNTIL={self.until:%Y%m%d}T235959Z")
+            # その日を含めて終わらせたいので、時刻つきのときは日の終わりを指す。
+            stamp = f"{self.until:%Y%m%d}" if all_day else f"{self.until:%Y%m%d}T235959Z"
+            parts.append(f"UNTIL={stamp}")
         return "RRULE:" + ";".join(parts)
 
     def label(self, day: date) -> str:
@@ -145,7 +150,9 @@ class EventDraft:
 
     def recurrence_rules(self) -> list[str] | None:
         """Googleカレンダーに渡す recurrence. 繰り返さないなら None."""
-        return [self.repeat.to_rrule(self.day)] if self.repeat else None
+        if not self.repeat:
+            return None
+        return [self.repeat.to_rrule(self.day, all_day=self.is_all_day)]
 
     def repeat_label(self) -> str:
         """確認画面に出す繰り返しの説明. 繰り返さないなら空."""

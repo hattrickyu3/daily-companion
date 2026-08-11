@@ -376,3 +376,113 @@ def test_確認画面に繰り返しの入力欄がある(client, monkeypatch) -
     # Assert
     assert 'name="repeat_freq"' in response.text
     assert "毎週日曜" in response.text
+
+
+# --- Googleに実際に送るリクエストの中身 ---
+#
+# 「繰り返しを登録するとエラーになる」実障害を受けて追加した。
+# create_event 自体を差し替えるテストしか無かったため、
+# 組み立てたリクエストがGoogleの要求を満たすかを誰も見ていなかった。
+
+
+def captured_body(monkeypatch, func, *args, **kwargs) -> dict:
+    """Google APIに渡るリクエストのbodyを取り出す."""
+    from companion.integrations import calendar_google
+
+    box: dict = {}
+
+    class FakeEvents:
+        def insert(self, calendarId, body):
+            box.update(body)
+            return self
+
+        def execute(self):
+            return {"id": "created1"}
+
+    class FakeService:
+        def events(self):
+            return FakeEvents()
+
+    monkeypatch.setattr(calendar_google, "_build_service", lambda: FakeService())
+    func(*args, **kwargs)
+    return box
+
+
+def test_時刻つき予定にタイムゾーン名を付ける(monkeypatch) -> None:
+    # Arrange: 繰り返しはオフセット(+09:00)だけでは 400 になる。
+    # 「Missing time zone definition for start time.」で実際に落ちた。
+    from datetime import datetime, timezone as tz
+
+    from companion.integrations.calendar_google import create_event
+
+    starts = datetime(2026, 8, 16, 10, 0, tzinfo=tz.utc)
+    ends = datetime(2026, 8, 16, 11, 0, tzinfo=tz.utc)
+
+    # Act
+    body = captured_body(
+        monkeypatch, create_event, "cal", "ゼミ", starts, ends,
+        recurrence=["RRULE:FREQ=WEEKLY;BYDAY=SU"],
+    )
+
+    # Assert
+    assert body["start"]["timeZone"] == "Asia/Tokyo"
+    assert body["end"]["timeZone"] == "Asia/Tokyo"
+
+
+def test_単発の予定にもタイムゾーン名を付ける(monkeypatch) -> None:
+    # Arrange: 繰り返しの有無で分岐を持たせない。付けて困るものではない
+    from datetime import datetime, timezone as tz
+
+    from companion.integrations.calendar_google import create_event
+
+    # Act
+    body = captured_body(
+        monkeypatch, create_event, "cal", "面接",
+        datetime(2026, 8, 16, 10, 0, tzinfo=tz.utc),
+        datetime(2026, 8, 16, 11, 0, tzinfo=tz.utc),
+    )
+
+    # Assert
+    assert body["start"]["timeZone"] == "Asia/Tokyo"
+
+
+def test_繰り返しの規則がbodyに入る(monkeypatch) -> None:
+    from datetime import datetime, timezone as tz
+
+    from companion.integrations.calendar_google import create_event
+
+    body = captured_body(
+        monkeypatch, create_event, "cal", "ゼミ",
+        datetime(2026, 8, 16, 10, 0, tzinfo=tz.utc),
+        datetime(2026, 8, 16, 11, 0, tzinfo=tz.utc),
+        recurrence=["RRULE:FREQ=WEEKLY;BYDAY=SU"],
+    )
+
+    assert body["recurrence"] == ["RRULE:FREQ=WEEKLY;BYDAY=SU"]
+
+
+def test_終日の繰り返しではUNTILを日付だけにする() -> None:
+    # Arrange: RFC5545では DTSTART が日付なら UNTIL も日付でなければならない。
+    # 時刻つきで出すと弾かれる。
+    draft = EventDraft(
+        title="ゴミ出し",
+        day=SUNDAY,
+        repeat=Recurrence(freq="WEEKLY", until=date(2026, 12, 31)),
+    )
+
+    # Act / Assert
+    assert draft.is_all_day is True
+    assert draft.recurrence_rules() == ["RRULE:FREQ=WEEKLY;BYDAY=SU;UNTIL=20261231"]
+
+
+def test_時刻つきの繰り返しではUNTILに時刻を付ける() -> None:
+    # Arrange
+    draft = EventDraft(
+        title="ゼミ",
+        day=SUNDAY,
+        start_time=time(10, 0),
+        repeat=Recurrence(freq="WEEKLY", until=date(2026, 12, 31)),
+    )
+
+    # Act / Assert
+    assert draft.recurrence_rules() == ["RRULE:FREQ=WEEKLY;BYDAY=SU;UNTIL=20261231T235959Z"]

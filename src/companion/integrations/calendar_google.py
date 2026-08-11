@@ -316,10 +316,14 @@ def create_event(
     recurrence は RRULE の一覧（例: ["RRULE:FREQ=WEEKLY;BYDAY=SU"]）。
     """
     service = _build_service()
+    # 繰り返し予定はタイムゾーン名がないと 400 になる。各回を展開するとき、
+    # オフセット(+09:00)だけではサマータイムの扱いが決まらないためである。
+    # 単発でも付けて困らないので、常に入れて分岐を持たない。
+    zone = get_config().timezone.key
     body: dict = {
         "summary": title,
-        "start": {"dateTime": starts_at.isoformat()},
-        "end": {"dateTime": ends_at.isoformat()},
+        "start": {"dateTime": starts_at.isoformat(), "timeZone": zone},
+        "end": {"dateTime": ends_at.isoformat(), "timeZone": zone},
     }
     if location:
         body["location"] = location
