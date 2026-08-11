@@ -54,6 +54,25 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
         conn.execute("COMMIT")
 
 
+# 既存のDBに後から足した列。schema.sql の CREATE TABLE は
+# IF NOT EXISTS なので、既にあるテーブルには新しい列が入らない。
+ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    # (テーブル, 列名, 型) — 複数日の予定に対応するため 2026-08-11 に追加
+    ("calendar_events", "end_date", "TEXT"),
+)
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """後から足した列が無ければ追加する. 何度実行しても安全."""
+    for table, column, column_type in ADDED_COLUMNS:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue  # テーブル自体がまだ無い（新規DB）なら schema.sql 側で作られる
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     """schema.sql を適用する. 何度実行しても安全."""
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    _add_missing_columns(conn)

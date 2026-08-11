@@ -30,7 +30,7 @@ from companion.db.repository import (
 from companion.db.reviews import list_reviews
 from companion.services.diary import append_entry, save_entry, structure_entry
 from companion.integrations.calendar_google import CalendarError
-from companion.services.event_draft import EventDraft
+from companion.services.event_draft import EventDraft, Recurrence, build_recurrence
 from companion.services.event_draft import parse as parse_event
 from companion.services.event_register import register as register_event
 from companion.services.calendar_sync import refresh_if_stale as refresh_calendar
@@ -209,13 +209,35 @@ def parse_event_route(request: Request, text: str = Form(...)) -> HTMLResponse:
     )
 
 
+def _build_repeat(
+    freq: str, interval: str, weekdays: list[str], until: str, day: date
+) -> Recurrence | None:
+    """フォームの入力から繰り返しの規則を組み立てる. 「なし」なら None."""
+    payload = {
+        "freq": freq,
+        "interval": interval,
+        "weekdays": weekdays,
+        "until": until,
+    }
+    repeat = build_recurrence(payload)
+    # 期限が開始日より前だと1回も発生しない。規則ごと捨てて1回きりにする。
+    if repeat is not None and repeat.until is not None and repeat.until < day:
+        return Recurrence(freq=repeat.freq, interval=repeat.interval, weekdays=repeat.weekdays)
+    return repeat
+
+
 @app.post("/events/create")
 def create_event_route(
     title: str = Form(...),
     day: str = Form(...),
+    end_day: str = Form(""),
     start_time: str = Form(""),
     end_time: str = Form(""),
     location: str = Form(""),
+    repeat_freq: str = Form(""),
+    repeat_interval: str = Form("1"),
+    repeat_weekdays: list[str] = Form(default=[]),
+    repeat_until: str = Form(""),
 ) -> RedirectResponse:
     """確認済みの内容でGoogleカレンダーに登録する."""
     target_day = _parse_day(day)
@@ -223,12 +245,19 @@ def create_event_route(
     if target_day is None or not name:
         return RedirectResponse("/events/new?error=input", status_code=303)
 
+    # 最終日が開始日より前なら単日として扱う。入力ミスで予定を落とすより害が小さい。
+    last_day = _parse_day(end_day)
+    if last_day is not None and last_day <= target_day:
+        last_day = None
+
     draft = EventDraft(
         title=name,
         day=target_day,
         start_time=_parse_clock(start_time),
         end_time=_parse_clock(end_time),
         location=location.strip() or None,
+        end_day=last_day,
+        repeat=_build_repeat(repeat_freq, repeat_interval, repeat_weekdays, repeat_until, target_day),
     )
 
     try:

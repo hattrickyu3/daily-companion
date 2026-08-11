@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     uid         TEXT    NOT NULL UNIQUE,          -- CalDAVのUID
     event_date  TEXT    NOT NULL,                 -- YYYY-MM-DD（開始日）
+    end_date    TEXT,                             -- YYYY-MM-DD（最終日、含む）。単日なら NULL
     starts_at   TEXT,                             -- ISO8601。終日予定では NULL
     ends_at     TEXT,
     title       TEXT    NOT NULL,

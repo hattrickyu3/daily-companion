@@ -18,6 +18,7 @@
 <div class="card">
   <p style="margin:0 0 2px"><strong>{{ draft.title }}</strong></p>
   <p class="muted small" style="margin:0">{{ draft.label() }}</p>
+  {% if draft.repeats %}<p class="muted small" style="margin:2px 0 0">繰り返し: {{ draft.repeat_label() }}</p>{% endif %}
   {% if draft.location %}<p class="muted small" style="margin:2px 0 0">{{ draft.location }}</p>{% endif %}
 </div>
 
@@ -32,8 +33,15 @@
                   background:var(--bg); border:1px solid var(--line); border-radius:8px;
                   margin:4px 0 12px">
 
-    <label class="small muted" for="day">日付</label>
+    <label class="small muted" for="day">日付（開始）</label>
     <input type="date" id="day" name="day" value="{{ draft.day.isoformat() }}" required
+           style="width:100%; padding:10px; font:inherit; color:var(--text);
+                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
+                  margin:4px 0 12px">
+
+    <label class="small muted" for="end_day">最終日（1日で終わるなら空のまま）</label>
+    <input type="date" id="end_day" name="end_day"
+           value="{{ draft.end_day.isoformat() if draft.end_day else '' }}"
            style="width:100%; padding:10px; font:inherit; color:var(--text);
                   background:var(--bg); border:1px solid var(--line); border-radius:8px;
                   margin:4px 0 12px">
@@ -54,6 +62,45 @@
 
     <label class="small muted" for="location">場所</label>
     <input type="text" id="location" name="location" value="{{ draft.location or '' }}"
+           style="width:100%; padding:10px; font:inherit; color:var(--text);
+                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
+                  margin:4px 0 0">
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <label class="small muted" for="repeat_freq">繰り返し</label>
+    <select id="repeat_freq" name="repeat_freq"
+            style="width:100%; padding:10px; font:inherit; color:var(--text);
+                   background:var(--bg); border:1px solid var(--line); border-radius:8px;
+                   margin:4px 0 12px">
+      {% set freq = draft.repeat.freq if draft.repeats else '' %}
+      <option value="" {% if not draft.repeats %}selected{% endif %}>なし（1回きり）</option>
+      <option value="DAILY" {% if freq == 'DAILY' %}selected{% endif %}>毎日</option>
+      <option value="WEEKLY" {% if freq == 'WEEKLY' %}selected{% endif %}>毎週</option>
+      <option value="MONTHLY" {% if freq == 'MONTHLY' %}selected{% endif %}>毎月</option>
+    </select>
+
+    <label class="small muted" for="repeat_interval">間隔（隔週なら2）</label>
+    <input type="number" id="repeat_interval" name="repeat_interval" min="1" max="99"
+           value="{{ draft.repeat.interval if draft.repeats else 1 }}"
+           style="width:100%; padding:10px; font:inherit; color:var(--text);
+                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
+                  margin:4px 0 12px">
+
+    <p class="small muted" style="margin:0 0 4px">曜日（毎週のときだけ。空なら開始日の曜日）</p>
+    <p style="margin:0 0 12px">
+      {% set chosen = draft.repeat.weekdays if draft.repeats else [] %}
+      {% for code, name in [('MO','月'),('TU','火'),('WE','水'),('TH','木'),('FR','金'),('SA','土'),('SU','日')] %}
+      <label class="small" style="display:inline-block; margin:0 10px 4px 0">
+        <input type="checkbox" name="repeat_weekdays" value="{{ code }}"
+               {% if code in chosen %}checked{% endif %}> {{ name }}
+      </label>
+      {% endfor %}
+    </p>
+
+    <label class="small muted" for="repeat_until">いつまで（空なら無期限）</label>
+    <input type="date" id="repeat_until" name="repeat_until"
+           value="{{ draft.repeat.until.isoformat() if draft.repeats and draft.repeat.until else '' }}"
            style="width:100%; padding:10px; font:inherit; color:var(--text);
                   background:var(--bg); border:1px solid var(--line); border-radius:8px;
                   margin:4px 0 0">

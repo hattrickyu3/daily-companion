@@ -43,9 +43,29 @@ class CalendarEvent:
     ends_at: datetime | None
     location: str | None
     is_all_day: bool
+    # 最終日（その日を含む）。単日の予定では None。
+    # Google APIの end は終日予定だと翌日を指す（排他的）が、
+    # ここでは「最終日」に直して持つ。画面に出すのは人間が読む日付なので、
+    # 排他的な値をアプリ内で持ち回ると必ずどこかで1日ずれる。
+    end_date: date | None = None
+
+    @property
+    def last_date(self) -> date:
+        """最終日. 単日なら開始日と同じ."""
+        return self.end_date or self.event_date
+
+    @property
+    def spans_days(self) -> bool:
+        """複数日にまたがるか."""
+        return self.last_date > self.event_date
 
     def time_label(self) -> str:
         """一覧表示用の時刻ラベル."""
+        if self.spans_days:
+            span = f"{self.event_date:%m/%d}〜{self.last_date:%m/%d}"
+            if self.is_all_day or self.starts_at is None:
+                return f"{span} 終日"
+            return f"{span} {self.starts_at:%H:%M}-{self.ends_at:%H:%M}" if self.ends_at else span
         if self.is_all_day or self.starts_at is None:
             return "終日"
         if self.ends_at is None:
@@ -155,7 +175,13 @@ def _to_event(raw: dict) -> CalendarEvent | None:
     starts_at, start_date, is_all_day = _parse_endpoint(raw.get("start", {}))
     if start_date is None:
         return None
-    ends_at, _, _ = _parse_endpoint(raw.get("end", {}))
+    ends_at, end_date, end_is_all_day = _parse_endpoint(raw.get("end", {}))
+
+    # 終日予定の end は翌日を指す（排他的）ので、1日戻して最終日にする。
+    if end_date is not None and end_is_all_day:
+        end_date -= timedelta(days=1)
+    elif ends_at is not None:
+        end_date = ends_at.date()
 
     return CalendarEvent(
         uid=raw.get("id", ""),
@@ -165,6 +191,7 @@ def _to_event(raw: dict) -> CalendarEvent | None:
         ends_at=ends_at,
         location=raw.get("location"),
         is_all_day=is_all_day,
+        end_date=end_date if end_date and end_date > start_date else None,
     )
 
 
@@ -236,20 +263,31 @@ def default_calendar_id() -> str:
 
 
 def create_all_day_event(
-    calendar_id: str, title: str, day: date, *, location: str | None = None
+    calendar_id: str,
+    title: str,
+    day: date,
+    *,
+    end_day: date | None = None,
+    location: str | None = None,
+    recurrence: list[str] | None = None,
 ) -> str:
     """終日予定を1件作成し、そのIDを返す.
 
-    Google Calendar APIの終日予定は end が翌日になる（排他的）ため、+1日する。
+    end_day は最終日（その日を含む）。合宿のように複数日にまたがる予定で使う。
+    Google Calendar APIの終日予定は end が翌日になる（排他的）ため、+1日して渡す。
+    recurrence は RRULE の一覧（例: ["RRULE:FREQ=WEEKLY;BYDAY=SU"]）。
     """
     service = _build_service()
+    last_day = max(end_day or day, day)
     body: dict = {
         "summary": title,
         "start": {"date": day.isoformat()},
-        "end": {"date": (day + timedelta(days=1)).isoformat()},
+        "end": {"date": (last_day + timedelta(days=1)).isoformat()},
     }
     if location:
         body["location"] = location
+    if recurrence:
+        body["recurrence"] = recurrence
 
     try:
         created = service.events().insert(calendarId=calendar_id, body=body).execute()
@@ -269,11 +307,13 @@ def create_event(
     *,
     location: str | None = None,
     description: str | None = None,
+    recurrence: list[str] | None = None,
 ) -> str:
     """時刻つきの予定を1件作成し、そのIDを返す.
 
     サービスアカウントからのゲスト招待はドメイン全体の委任が必要なため、
     ここでは招待者なしの予定のみを想定している。
+    recurrence は RRULE の一覧（例: ["RRULE:FREQ=WEEKLY;BYDAY=SU"]）。
     """
     service = _build_service()
     body: dict = {
@@ -285,6 +325,8 @@ def create_event(
         body["location"] = location
     if description:
         body["description"] = description
+    if recurrence:
+        body["recurrence"] = recurrence
 
     try:
         created = service.events().insert(calendarId=calendar_id, body=body).execute()

@@ -23,7 +23,13 @@ def _to_event(row: sqlite3.Row) -> CalendarEvent:
         ends_at=datetime.fromisoformat(row["ends_at"]) if row["ends_at"] else None,
         location=row["location"],
         is_all_day=bool(row["is_all_day"]),
+        end_date=date.fromisoformat(row["end_date"]) if row["end_date"] else None,
     )
+
+
+# 予定の期間と、問い合わせた期間が重なるかどうかの条件。
+# end_date は単日の予定では NULL なので、その場合は開始日で比べる。
+_OVERLAPS = "event_date <= ? AND COALESCE(end_date, event_date) >= ?"
 
 
 def upsert_events(conn: sqlite3.Connection, events: list[CalendarEvent]) -> int:
@@ -32,10 +38,11 @@ def upsert_events(conn: sqlite3.Connection, events: list[CalendarEvent]) -> int:
         conn.execute(
             """
             INSERT INTO calendar_events
-                (uid, event_date, starts_at, ends_at, title, location, is_all_day)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (uid, event_date, end_date, starts_at, ends_at, title, location, is_all_day)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (uid) DO UPDATE SET
                 event_date = excluded.event_date,
+                end_date   = excluded.end_date,
                 starts_at  = excluded.starts_at,
                 ends_at    = excluded.ends_at,
                 title      = excluded.title,
@@ -46,6 +53,7 @@ def upsert_events(conn: sqlite3.Connection, events: list[CalendarEvent]) -> int:
             (
                 event.uid,
                 event.event_date.isoformat(),
+                event.end_date.isoformat() if event.end_date else None,
                 event.starts_at.isoformat() if event.starts_at else None,
                 event.ends_at.isoformat() if event.ends_at else None,
                 event.title,
@@ -62,8 +70,8 @@ def prune_events(conn: sqlite3.Connection, start: date, end: date, keep_uids: se
     同期のたびに期間内を突き合わせることで、削除された予定が残り続けるのを防ぐ。
     """
     rows = conn.execute(
-        "SELECT uid FROM calendar_events WHERE event_date BETWEEN ? AND ?",
-        (start.isoformat(), end.isoformat()),
+        f"SELECT uid FROM calendar_events WHERE {_OVERLAPS}",
+        (end.isoformat(), start.isoformat()),
     ).fetchall()
 
     stale = [row["uid"] for row in rows if row["uid"] not in keep_uids]
@@ -73,20 +81,27 @@ def prune_events(conn: sqlite3.Connection, start: date, end: date, keep_uids: se
 
 
 def list_events_for(conn: sqlite3.Connection, day: date) -> list[CalendarEvent]:
-    """指定日の予定を時刻順に返す."""
+    """指定日の予定を時刻順に返す.
+
+    合宿のように複数日にまたがる予定は、初日だけでなく期間中の全ての日に出す。
+    初日にしか出ないと、2日目以降にその日の画面を見たときに予定が無いように見える。
+    """
     rows = conn.execute(
-        "SELECT * FROM calendar_events WHERE event_date = ?"
+        f"SELECT * FROM calendar_events WHERE {_OVERLAPS}"
         " ORDER BY is_all_day DESC, starts_at, title",
-        (day.isoformat(),),
+        (day.isoformat(), day.isoformat()),
     ).fetchall()
     return [_to_event(row) for row in rows]
 
 
 def list_events_between(conn: sqlite3.Connection, start: date, end: date) -> list[CalendarEvent]:
-    """期間内の予定を日付・時刻順に返す."""
+    """期間に重なる予定を日付・時刻順に返す.
+
+    開始日が期間外でも、期間内まで続いている予定は含める。
+    """
     rows = conn.execute(
-        "SELECT * FROM calendar_events WHERE event_date BETWEEN ? AND ?"
+        f"SELECT * FROM calendar_events WHERE {_OVERLAPS}"
         " ORDER BY event_date, is_all_day DESC, starts_at, title",
-        (start.isoformat(), end.isoformat()),
+        (end.isoformat(), start.isoformat()),
     ).fetchall()
     return [_to_event(row) for row in rows]

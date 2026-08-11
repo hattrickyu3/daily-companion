@@ -9,7 +9,7 @@ from __future__ import annotations
 import calendar
 import sqlite3
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from companion.db.events import list_events_between
 from companion.db.repository import list_entries_between
@@ -106,9 +106,15 @@ def build(conn: sqlite3.Connection, year: int, month: int, today: date) -> Month
         entry.entry_date: entry for entry in list_entries_between(conn, start, end)
     }
 
+    # 複数日にまたがる予定は、その期間の全ての日で数える。
+    # 初日だけに数えると、カレンダー上で2日目以降が空いているように見える。
     events_per_day: dict[date, int] = {}
     for event in list_events_between(conn, start, end):
-        events_per_day[event.event_date] = events_per_day.get(event.event_date, 0) + 1
+        day = max(event.event_date, start)
+        last = min(event.last_date, end)
+        while day <= last:
+            events_per_day[day] = events_per_day.get(day, 0) + 1
+            day += timedelta(days=1)
 
     grid = calendar.Calendar(firstweekday=FIRST_WEEKDAY)
     weeks: list[tuple[DayCell, ...]] = []
