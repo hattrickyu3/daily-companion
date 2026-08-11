@@ -14,13 +14,12 @@ from __future__ import annotations
 import sys
 
 from companion.clock import today_local
-from companion.config import get_config
 from companion.db.connection import session
 from companion.db.repository import get_entry
 from companion.integrations.notify import send_notification
 from companion.jobs.base import run_job
+from companion.links import app_url
 from companion.services.schedule import get_events_for
-from companion.web.serve import local_ip
 
 JOB_NAME = "evening_prompt"
 MAX_EVENTS_IN_MESSAGE = 5
@@ -29,10 +28,6 @@ MAX_EVENTS_IN_MESSAGE = 5
 # 気づいてほしい通知には必ず3以上を使う。
 PRIORITY_DEFAULT = 3
 
-
-def app_url(path: str = "/") -> str:
-    """通知からタップして開くURL. 家のWi-Fi内からのみ到達できる."""
-    return f"http://{local_ip()}:{get_config().web_port}{path}"
 
 
 def build_prompt_message() -> tuple[str, str]:

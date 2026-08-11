@@ -53,6 +53,9 @@ class Config:
     google_calendar_ids: tuple[str, ...]
     web_host: str
     web_port: int
+    # 通知からタップして開くURLの入口（例: http://mypc:8765）。
+    # 空なら家のLAN内のIPを使う（＝外出先からは開けない）。
+    app_base_url: str
     news_topics: tuple[str, ...]
     claude_timeout_sec: int
     timezone: ZoneInfo
@@ -117,6 +120,8 @@ def load_config() -> Config:
         google_calendar_ids=_split_csv(os.getenv("GOOGLE_CALENDAR_IDS")),
         web_host=os.getenv("WEB_HOST", "0.0.0.0").strip() or "0.0.0.0",
         web_port=_read_int("WEB_PORT", DEFAULT_WEB_PORT),
+        # 末尾のスラッシュは組み立て時に二重にならないよう落としておく。
+        app_base_url=os.getenv("APP_BASE_URL", "").strip().rstrip("/"),
         news_topics=_validate_news_topics(_split_csv(os.getenv("NEWS_TOPICS"))),
         claude_timeout_sec=_read_int("CLAUDE_TIMEOUT_SEC", DEFAULT_CLAUDE_TIMEOUT_SEC),
         timezone=timezone,

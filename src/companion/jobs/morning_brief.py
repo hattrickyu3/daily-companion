@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 
 from companion.clock import today_local
-from companion.config import get_config
 from companion.db.briefings import save_briefing
 from companion.db.connection import session
 from companion.db.news import list_digests_for
@@ -26,9 +25,9 @@ from companion.integrations.notify import send_notification
 from companion.jobs.backup import run as backup_run
 from companion.jobs.base import run_job
 from companion.jobs.news_digest import collect
+from companion.links import app_url
 from companion.services.briefing import generate
 from companion.services.calendar_sync import sync_window
-from companion.web.serve import local_ip
 
 log = logging.getLogger(__name__)
 
@@ -36,10 +35,6 @@ JOB_NAME = "morning_brief"
 PRIORITY_DEFAULT = 3
 MAX_HEADLINES = 3
 
-
-def app_url(path: str = "/") -> str:
-    """通知からタップして開くURL."""
-    return f"http://{local_ip()}:{get_config().web_port}{path}"
 
 
 def backup_safely() -> str:

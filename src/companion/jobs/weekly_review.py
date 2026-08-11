@@ -10,21 +10,16 @@
 from __future__ import annotations
 
 from companion.clock import today_local, week_start
-from companion.config import get_config
 from companion.db.connection import session
 from companion.db.reviews import save_review
 from companion.integrations.notify import send_notification
 from companion.jobs.base import run_job
+from companion.links import app_url
 from companion.services.weekly_review import generate
-from companion.web.serve import local_ip
 
 JOB_NAME = "weekly_review"
 PRIORITY_DEFAULT = 3
 
-
-def app_url(path: str = "/") -> str:
-    """通知からタップして開くURL."""
-    return f"http://{local_ip()}:{get_config().web_port}{path}"
 
 
 def run() -> str:

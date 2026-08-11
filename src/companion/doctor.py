@@ -42,10 +42,16 @@ def _check_config() -> CheckResult:
         missing.append(f"サービスアカウント鍵 ({config.google_service_account_file})")
     if missing:
         return CheckResult("設定 (.env)", NG, f"未設定: {', '.join(missing)}")
+    # 通知のリンク先。未設定だと外出先で通知をタップしても開けないので、
+    # 異常ではないが分かるように出しておく。
+    from companion.links import base_url
+
+    link = base_url() if config.app_base_url else f"{base_url()}（家のWi-Fi内のみ）"
     return CheckResult(
         "設定 (.env)",
         OK,
-        f"ニュース={','.join(config.news_topics)} / Web={config.web_host}:{config.web_port}",
+        f"ニュース={','.join(config.news_topics)} / Web={config.web_host}:{config.web_port}\n"
+        f"    通知のリンク先: {link}",
     )
 
 
