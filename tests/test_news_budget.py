@@ -182,6 +182,36 @@ def test_ジャンル未設定でも落ちない(collector, monkeypatch) -> None
     assert module.collect(TODAY) == "対象ジャンルが設定されていません"
 
 
+def test_1本目は単独で走らせる(collector, monkeypatch) -> None:
+    # Arrange: プロンプトのキャッシュを温めてから残りを投げる。
+    # 同時に投げると全部がキャッシュ未命中になり、その分を毎回書き込むことになる。
+    module = collector
+    set_topics(monkeypatch, module, ("ai_tech", "job_hunting", "social"))
+
+    running = 0
+    peaks: list[int] = []
+    lock = threading.Lock()
+
+    def slow(topic, today):
+        nonlocal running
+        with lock:
+            running += 1
+            peaks.append(running)
+        time.sleep(0.2)
+        with lock:
+            running -= 1
+        return NewsResult(topic=topic, items=items(1))
+
+    monkeypatch.setattr(module, "generate", slow)
+
+    # Act
+    module.collect(TODAY)
+
+    # Assert: 最初の1本だけは他と重ならない
+    assert peaks[0] == 1
+    assert max(peaks) > 1
+
+
 def test_実際に使うジャンル数なら1巡で終わる() -> None:
     # Arrange: 同時実行数を下回っていれば2巡目が発生しない。
     # ここを割ると、ジャンルを1つ足しただけで所要時間がほぼ倍になる。
@@ -198,7 +228,8 @@ def test_実際に使うジャンル数なら1巡で終わる() -> None:
 
 def test_全ジャンルを選んでも朝のジョブが上限に収まる() -> None:
     # Arrange: 設定できる全ジャンルを有効にした最悪の場合を見る。
-    # 同時実行なので、所要時間はジャンル数ではなく「波の数」で決まる。
+    # 所要時間はジャンル数ではなく「波の数」で決まる。
+    # 1本目はキャッシュを温めるために単独で走るので、その分を1波として足す。
     from companion.config import VALID_NEWS_TOPICS
     from companion.services.briefing import BRIEFING_TIMEOUT_SEC
     from companion.services.news import NEWS_TIMEOUT_SEC
@@ -206,7 +237,8 @@ def test_全ジャンルを選んでも朝のジョブが上限に収まる() ->
     overhead_sec = 60  # バックアップ・カレンダー同期・DB書き込み・通知
 
     # Act
-    waves = math.ceil(len(VALID_NEWS_TOPICS) / news_digest.MAX_CONCURRENT)
+    rest = len(VALID_NEWS_TOPICS) - 1
+    waves = 1 + math.ceil(rest / news_digest.MAX_CONCURRENT)
     worst_case = waves * NEWS_TIMEOUT_SEC + BRIEFING_TIMEOUT_SEC + overhead_sec
 
     # Assert

@@ -6,10 +6,15 @@
 このジョブ自体は通知しない。朝の通知を1回にまとめるためである。
 結果はWeb画面で読む。
 
-ジャンルは同時に走らせる。1ジャンルあたり2〜5分かかるので、
-順番に処理するとジャンルを増やしたときに朝のジョブが
-タスクスケジューラの実行上限(15分)に当たってしまう。
+ジャンルは同時に走らせる。順番に処理するとジャンルを増やしたときに
+朝のジョブがタスクスケジューラの実行上限(15分)に当たってしまう。
 同時実行なら、かかる時間はジャンル数ではなく一番遅いジャンルで決まる。
+
+ただし最初の1ジャンルだけは単独で走らせる。claude -p は毎回
+ツール定義とシステムプロンプトで3〜4万トークンを送っており、
+同時に投げると全部がキャッシュ未命中になって、その分を毎回書き込むことになる。
+1本先に通してキャッシュを温めておくと、残りは読み込み(1/12の単価)で済む。
+実測で1日あたり0.1ドル強の差になる。
 """
 
 from __future__ import annotations
@@ -32,7 +37,7 @@ JOB_NAME = "news_digest"
 # 同時に走らせる claude -p の数。
 # ジャンル数がこれを超えると2巡目が発生し、所要時間がほぼ倍になる。
 # 実際に使うジャンル数（現在4）を下回らない値にしておくこと。
-# 各プロセスはWeb検索の待ちが大半でCPUは張り付かないが、
+# 各プロセスはClaudeの応答待ちが大半でCPUは張り付かないが、
 # 無制限に並べるとメモリと同時接続が増えるので上限自体は残す。
 MAX_CONCURRENT = 4
 
@@ -55,9 +60,13 @@ def collect(today: date) -> str:
     if not topics:
         return "対象ジャンルが設定されていません"
 
-    workers = min(len(topics), MAX_CONCURRENT)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(lambda topic: _generate_one(topic, today), topics))
+    # 1本目でプロンプトのキャッシュを温めてから、残りを同時に走らせる。
+    head, rest = topics[0], topics[1:]
+    results = [_generate_one(head, today)]
+    if rest:
+        workers = min(len(rest), MAX_CONCURRENT)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results += list(pool.map(lambda topic: _generate_one(topic, today), rest))
 
     collected: list[str] = []
     for result in results:

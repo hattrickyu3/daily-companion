@@ -1,21 +1,32 @@
 """ジャンル設定のテスト.
 
 ラベルと実際に集まるものが食い違わないこと、
-ニュース性のないジャンルに「直近1週間」の縛りをかけないことを確認する。
+ニュース性のないジャンルに期間の縛りをかけないことを確認する。
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 from companion.config import VALID_NEWS_TOPICS
+from companion.integrations import feeds
 from companion.integrations.claude_runner import ClaudeResult
 from companion.services import news
 
 TODAY = date(2026, 8, 8)
+NOW = datetime(2026, 8, 8, 7, 0, tzinfo=timezone.utc)
+
+CANDIDATES = (
+    feeds.Article(
+        title="候補記事", url="https://example.com/a", source="テスト媒体",
+        snippet="抜粋", published=NOW,
+    ),
+)
 
 
 def capture_prompt(monkeypatch) -> dict[str, str]:
+    """Claudeに渡ったプロンプトを覗く. RSS取得は固定の候補に差し替える."""
+    monkeypatch.setattr(feeds, "collect", lambda topic, **kwargs: CANDIDATES)
     captured: dict[str, str] = {}
 
     def capture(prompt, **kwargs):
@@ -23,6 +34,20 @@ def capture_prompt(monkeypatch) -> dict[str, str]:
         return ClaudeResult(text='{"items": []}', session_id=None)
 
     monkeypatch.setattr(news, "run_claude", capture)
+    return captured
+
+
+def capture_collect_args(monkeypatch) -> dict:
+    """feeds.collect に渡った引数を覗く."""
+    captured: dict = {}
+
+    def capture(topic, **kwargs):
+        captured.update(kwargs)
+        captured["topic"] = topic
+        return CANDIDATES
+
+    monkeypatch.setattr(feeds, "collect", capture)
+    monkeypatch.setattr(news, "run_claude", lambda prompt, **kwargs: ClaudeResult('{"items": []}', None))
     return captured
 
 
@@ -54,29 +79,29 @@ def test_件数は5件を要求する(monkeypatch) -> None:
 
 
 def test_ニュース系は直近1週間に絞る(monkeypatch) -> None:
-    # Arrange
-    captured = capture_prompt(monkeypatch)
+    # Arrange: 期間の絞り込みはプロンプトではなく取得側でかける
+    captured = capture_collect_args(monkeypatch)
 
     # Act
     news.generate("ai_tech", TODAY)
 
     # Assert
-    assert "直近1週間以内" in captured["prompt"]
+    assert captured["max_age_days"] == news.RECENT_DAYS == 7
 
 
 def test_実践知は期間で絞らない(monkeypatch) -> None:
     # Arrange: ESの書き方のような知見は、古くても役に立つものは役に立つ
-    captured = capture_prompt(monkeypatch)
+    captured = capture_collect_args(monkeypatch)
 
     # Act
     news.generate("social", TODAY)
 
     # Assert
-    assert "直近1週間以内" not in captured["prompt"]
+    assert captured["max_age_days"] is None
     assert "social" in news.EVERGREEN_TOPICS
 
 
-def test_実践知には探し方の指示を添える(monkeypatch) -> None:
+def test_実践知には選び方の指示を添える(monkeypatch) -> None:
     # Arrange
     captured = capture_prompt(monkeypatch)
 
@@ -85,10 +110,10 @@ def test_実践知には探し方の指示を添える(monkeypatch) -> None:
 
     # Assert
     assert "アフィリエイト" in captured["prompt"]
-    assert "開けなかったURLは載せないでください" in captured["prompt"]
+    assert "体験記" in captured["prompt"]
 
 
-def test_ニュース系には探し方の指示を混ぜない(monkeypatch) -> None:
+def test_ニュース系には選び方の指示を混ぜない(monkeypatch) -> None:
     # Arrange
     captured = capture_prompt(monkeypatch)
 
