@@ -102,6 +102,28 @@
   </div>
 
   <div class="stack">
+    {% if mail_actions is not none %}
+    <section class="card">
+      <div class="card-head">
+        <h2><i data-lucide="mail-warning"></i>要対応メール</h2>
+        <a class="btn btn-icon" href="/mail" aria-label="メールの一覧" title="メールの一覧"><i data-lucide="mail"></i></a>
+      </div>
+      {% if mail_actions %}
+      <ul class="events">
+        {% for mail in mail_actions %}
+        {% set left = mail.days_left(day) %}
+        <li>
+          <span class="time">{% if mail.deadline %}〆{{ mail.deadline.strftime("%m/%d") }}{% if left == 0 %} 今日{% else %} あと{{ left }}日{% endif %}{% else %}締切なし{% endif %}</span>
+          <span>{{ mail.summary }}<span class="place"><i data-lucide="user"></i>{{ mail.sender }}</span></span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="empty">対応が必要なメールはありません。</p>
+      {% endif %}
+    </section>
+    {% endif %}
+
     <section class="card">
       <div class="card-head">
         <h2><i data-lucide="calendar-days"></i>今日の予定</h2>

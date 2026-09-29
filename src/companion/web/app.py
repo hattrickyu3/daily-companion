@@ -42,6 +42,8 @@ from companion.services.month_view import month_bounds, parse_month
 from companion.services.news import topic_label
 from companion.services.news_history import build as build_news_history
 from companion.services.schedule import get_events_for
+from companion.web.mail_routes import action_items_for as mail_actions_for
+from companion.web.mail_routes import router as mail_router
 from companion.web.notes_routes import router as notes_router
 
 log = logging.getLogger(__name__)
@@ -53,6 +55,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 app = FastAPI(title="daily-companion", docs_url=None, redoc_url=None)
 app.include_router(notes_router)
+app.include_router(mail_router)
 
 
 def _notify_structuring_failure(entry_date: date, reason: str) -> None:
@@ -109,6 +112,7 @@ def today_page(request: Request) -> HTMLResponse:
             "digests": digests,
             "topic_label": topic_label,
             "recent": [e for e in recent if e.entry_date != day],
+            "mail_actions": mail_actions_for(day),
         },
     )
 

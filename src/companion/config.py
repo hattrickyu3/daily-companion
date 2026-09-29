@@ -63,6 +63,9 @@ class Config:
     # Obsidianの保管庫のフォルダ。スマホからノートを読むための画面で使う。
     # 空ならノート画面は「未設定」と案内するだけで、ほかの機能には影響しない。
     notes_dir: Path | None = None
+    # mail-notifier が書き出すメールの判定結果（JSON）。
+    # 空ならメール画面は「未設定」と案内するだけで、今日の画面にもメール欄を出さない。
+    mail_results_file: Path | None = None
 
     @property
     def has_calendar(self) -> bool:
@@ -116,6 +119,7 @@ def load_config() -> Config:
 
     key_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
     notes_dir = os.getenv("NOTES_DIR", "").strip()
+    mail_results_file = os.getenv("MAIL_RESULTS_FILE", "").strip()
 
     return Config(
         ntfy_topic=os.getenv("NTFY_TOPIC", "").strip(),
@@ -130,6 +134,7 @@ def load_config() -> Config:
         claude_timeout_sec=_read_int("CLAUDE_TIMEOUT_SEC", DEFAULT_CLAUDE_TIMEOUT_SEC),
         timezone=timezone,
         notes_dir=Path(notes_dir) if notes_dir else None,
+        mail_results_file=Path(mail_results_file) if mail_results_file else None,
     )
 
 

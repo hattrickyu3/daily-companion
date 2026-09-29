@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}メール — daily-companion{% endblock %}
+
+{% block head %}
+<style>
+  .c-summary { min-width: 200px; font-weight: 700; }
+  .c-subject { min-width: 240px; }
+  .c-sender { min-width: 120px; }
+</style>
+{% endblock %}
+
+{% set ICONS = {"要対応": "mail-warning", "確認": "mail-open", "不要": "mail-x"} %}
+
+{% macro deadline_label(item, today) -%}
+{%- if item.deadline -%}
+{%- set left = item.days_left(today) -%}
+{{ item.deadline.strftime("%m/%d") }}{% if left == 0 %}（今日まで）{% elif left > 0 %}（あと{{ left }}日）{% else %}（過ぎています）{% endif %}
+{%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>メール</h1>
+    {% if inbox and inbox.updated_at %}<p class="page-sub">最終確認: {{ inbox.updated_at.strftime("%m/%d %H:%M") }}（毎日 8:00 と 21:00 に更新）</p>{% endif %}
+  </div>
+</div>
+
+{% if inbox is none %}
+<div class="notice warn">
+  <i data-lucide="triangle-alert"></i>
+  <p>メールの判定結果の場所が設定されていません。<code>.env</code> の <code>MAIL_RESULTS_FILE</code> に、mail-notifier の <code>data\results.json</code> のパスを書いてください。</p>
+</div>
+
+{% else %}
+<div class="stats">
+  {% for name in categories %}
+  <div class="stat">
+    <span class="stat-icon"><i data-lucide="{{ ICONS[name] }}"></i></span>
+    <div><p class="stat-label">{{ name }}</p><p class="stat-value">{{ inbox.count(name) }}<small>通</small></p></div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="tags filters">
+  <a class="tag{% if not active %} on{% endif %}" href="/mail">すべて</a>
+  {% for name in categories %}
+  <a class="tag{% if active == name %} on{% endif %}" href="/mail?category={{ name|urlencode }}"><i data-lucide="{{ ICONS[name] }}"></i>{{ name }}</a>
+  {% endfor %}
+</div>
+
+{% if not rows %}
+<div class="card">
+  <p class="empty">
+    {% if active %}この区分のメールはありません。
+    {% else %}まだ判定結果がありません。毎日 8:00 と 21:00 に更新されます。{% endif %}
+  </p>
+</div>
+{% else %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>受信</th><th>区分</th><th>締切</th><th>要約</th><th>差出人</th><th>件名</th></tr>
+    </thead>
+    <tbody>
+      {% for item in rows %}
+      <tr>
+        <td class="date">{{ item.received.strftime("%m/%d %H:%M") }}</td>
+        <td class="nowrap"><span class="tag"><i data-lucide="{{ ICONS[item.category] }}"></i>{{ item.category }}</span></td>
+        <td class="date">{{ deadline_label(item, today) }}</td>
+        <td class="c-summary">{{ item.summary }}</td>
+        <td class="c-sender">{{ item.sender }}</td>
+        <td class="c-subject">{{ item.subject }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="page-foot">メール本文は Outlook で開いてください。ここでは AI の判定結果だけを表示しています。</p>
+{% endif %}
+{% endif %}
+{% endblock %}
