@@ -3,112 +3,107 @@
 
 {% block content %}
 {% if not draft %}
-<h2>読み取れませんでした</h2>
-<div class="card">
-  <p style="margin:0">「{{ original }}」から日付を特定できませんでした。</p>
-  <p class="muted small" style="margin:6px 0 0">
-    日付をはっきり書くと読み取れます。例:「8月20日 10時 ゼミ」「明日 15:00 面接」
-  </p>
+<div class="page-head">
+  <div><h1>読み取れませんでした</h1></div>
 </div>
-<p style="margin-top:16px"><a href="/events/new">入力に戻る</a></p>
+<div class="notice warn">
+  <i data-lucide="triangle-alert"></i>
+  <div>
+    <p>「{{ original }}」から日付を特定できませんでした。</p>
+    <p class="hint">日付をはっきり書くと読み取れます。例:「8月20日 10時 ゼミ」「明日 15:00 面接」</p>
+  </div>
+</div>
+<a class="btn" href="/events/new"><i data-lucide="chevron-left"></i>入力に戻る</a>
 
 {% else %}
-<h2>この内容で登録しますか</h2>
-
-<div class="card">
-  <p style="margin:0 0 2px"><strong>{{ draft.title }}</strong></p>
-  <p class="muted small" style="margin:0">{{ draft.label() }}</p>
-  {% if draft.repeats %}<p class="muted small" style="margin:2px 0 0">繰り返し: {{ draft.repeat_label() }}</p>{% endif %}
-  {% if draft.location %}<p class="muted small" style="margin:2px 0 0">{{ draft.location }}</p>{% endif %}
+<div class="page-head">
+  <div>
+    <h1>この内容で登録しますか</h1>
+    <p class="page-sub">入力:「{{ original }}」</p>
+  </div>
 </div>
 
-<p class="muted small">入力: 「{{ original }}」</p>
+<div style="max-width:720px">
+<section class="card" style="margin-bottom:14px">
+  <p style="font-size:19px; font-weight:700; line-height:1.25">{{ draft.title }}</p>
+  <ul class="events meta" style="margin-top:10px">
+    <li><span class="time"><i data-lucide="clock"></i></span><span>{{ draft.label() }}</span></li>
+    {% if draft.repeats %}<li><span class="time"><i data-lucide="repeat"></i></span><span>繰り返し: {{ draft.repeat_label() }}</span></li>{% endif %}
+    {% if draft.location %}<li><span class="time"><i data-lucide="map-pin"></i></span><span>{{ draft.location }}</span></li>{% endif %}
+  </ul>
+</section>
 
-<h2>間違っていれば直せます</h2>
 <form action="/events/create" method="post">
-  <div class="card">
-    <label class="small muted" for="title">件名</label>
-    <input type="text" id="title" name="title" value="{{ draft.title }}" required
-           style="width:100%; padding:10px; font:inherit; color:var(--text);
-                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
-                  margin:4px 0 12px">
+  <section class="card">
+    <div class="card-head"><h2><i data-lucide="pencil"></i>間違っていれば直せます</h2></div>
+    <div class="fields">
+      <div class="wide">
+        <label for="title">件名</label>
+        <input type="text" id="title" name="title" value="{{ draft.title }}" required>
+      </div>
+      <div>
+        <label for="day">日付（開始）</label>
+        <input type="date" id="day" name="day" value="{{ draft.day.isoformat() }}" required>
+      </div>
+      <div>
+        <label for="end_day">最終日（1日で終わるなら空のまま）</label>
+        <input type="date" id="end_day" name="end_day" value="{{ draft.end_day.isoformat() if draft.end_day else '' }}">
+      </div>
+      <div>
+        <label for="start_time">開始（空にすると終日）</label>
+        <input type="time" id="start_time" name="start_time" value="{{ draft.start_time.strftime('%H:%M') if draft.start_time else '' }}">
+      </div>
+      <div>
+        <label for="end_time">終了（空にすると1時間）</label>
+        <input type="time" id="end_time" name="end_time" value="{{ draft.end_time.strftime('%H:%M') if draft.end_time else '' }}">
+      </div>
+      <div class="wide">
+        <label for="location">場所</label>
+        <input type="text" id="location" name="location" value="{{ draft.location or '' }}">
+      </div>
+    </div>
+  </section>
 
-    <label class="small muted" for="day">日付（開始）</label>
-    <input type="date" id="day" name="day" value="{{ draft.day.isoformat() }}" required
-           style="width:100%; padding:10px; font:inherit; color:var(--text);
-                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
-                  margin:4px 0 12px">
+  <section class="card">
+    <div class="card-head"><h2><i data-lucide="repeat"></i>繰り返し</h2></div>
+    {% set freq = draft.repeat.freq if draft.repeats else '' %}
+    <div class="fields">
+      <div>
+        <label for="repeat_freq">繰り返し</label>
+        <select id="repeat_freq" name="repeat_freq">
+          <option value="" {% if not draft.repeats %}selected{% endif %}>なし（1回きり）</option>
+          <option value="DAILY" {% if freq == 'DAILY' %}selected{% endif %}>毎日</option>
+          <option value="WEEKLY" {% if freq == 'WEEKLY' %}selected{% endif %}>毎週</option>
+          <option value="MONTHLY" {% if freq == 'MONTHLY' %}selected{% endif %}>毎月</option>
+        </select>
+      </div>
+      <div>
+        <label for="repeat_interval">間隔（隔週なら2）</label>
+        <input type="number" id="repeat_interval" name="repeat_interval" min="1" max="99"
+               value="{{ draft.repeat.interval if draft.repeats else 1 }}">
+      </div>
+      <div class="wide">
+        <p class="label">曜日（毎週のときだけ。空なら開始日の曜日）</p>
+        {% set chosen = draft.repeat.weekdays if draft.repeats else [] %}
+        <div class="weekdays">
+          {% for code, name in [('MO','月'),('TU','火'),('WE','水'),('TH','木'),('FR','金'),('SA','土'),('SU','日')] %}
+          <label class="tag"><input type="checkbox" name="repeat_weekdays" value="{{ code }}" {% if code in chosen %}checked{% endif %}>{{ name }}</label>
+          {% endfor %}
+        </div>
+      </div>
+      <div>
+        <label for="repeat_until">いつまで（空なら無期限）</label>
+        <input type="date" id="repeat_until" name="repeat_until"
+               value="{{ draft.repeat.until.isoformat() if draft.repeats and draft.repeat.until else '' }}">
+      </div>
+    </div>
+  </section>
 
-    <label class="small muted" for="end_day">最終日（1日で終わるなら空のまま）</label>
-    <input type="date" id="end_day" name="end_day"
-           value="{{ draft.end_day.isoformat() if draft.end_day else '' }}"
-           style="width:100%; padding:10px; font:inherit; color:var(--text);
-                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
-                  margin:4px 0 12px">
-
-    <label class="small muted" for="start_time">開始（空にすると終日）</label>
-    <input type="time" id="start_time" name="start_time"
-           value="{{ draft.start_time.strftime('%H:%M') if draft.start_time else '' }}"
-           style="width:100%; padding:10px; font:inherit; color:var(--text);
-                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
-                  margin:4px 0 12px">
-
-    <label class="small muted" for="end_time">終了（空にすると1時間）</label>
-    <input type="time" id="end_time" name="end_time"
-           value="{{ draft.end_time.strftime('%H:%M') if draft.end_time else '' }}"
-           style="width:100%; padding:10px; font:inherit; color:var(--text);
-                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
-                  margin:4px 0 12px">
-
-    <label class="small muted" for="location">場所</label>
-    <input type="text" id="location" name="location" value="{{ draft.location or '' }}"
-           style="width:100%; padding:10px; font:inherit; color:var(--text);
-                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
-                  margin:4px 0 0">
+  <div class="form-foot" style="justify-content:flex-end">
+    <a class="btn" href="/events/new"><i data-lucide="chevron-left"></i>やめて入力に戻る</a>
+    <button type="submit" class="btn btn-primary"><i data-lucide="calendar-check"></i>Googleカレンダーに登録する</button>
   </div>
-
-  <div class="card" style="margin-top:12px">
-    <label class="small muted" for="repeat_freq">繰り返し</label>
-    <select id="repeat_freq" name="repeat_freq"
-            style="width:100%; padding:10px; font:inherit; color:var(--text);
-                   background:var(--bg); border:1px solid var(--line); border-radius:8px;
-                   margin:4px 0 12px">
-      {% set freq = draft.repeat.freq if draft.repeats else '' %}
-      <option value="" {% if not draft.repeats %}selected{% endif %}>なし（1回きり）</option>
-      <option value="DAILY" {% if freq == 'DAILY' %}selected{% endif %}>毎日</option>
-      <option value="WEEKLY" {% if freq == 'WEEKLY' %}selected{% endif %}>毎週</option>
-      <option value="MONTHLY" {% if freq == 'MONTHLY' %}selected{% endif %}>毎月</option>
-    </select>
-
-    <label class="small muted" for="repeat_interval">間隔（隔週なら2）</label>
-    <input type="number" id="repeat_interval" name="repeat_interval" min="1" max="99"
-           value="{{ draft.repeat.interval if draft.repeats else 1 }}"
-           style="width:100%; padding:10px; font:inherit; color:var(--text);
-                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
-                  margin:4px 0 12px">
-
-    <p class="small muted" style="margin:0 0 4px">曜日（毎週のときだけ。空なら開始日の曜日）</p>
-    <p style="margin:0 0 12px">
-      {% set chosen = draft.repeat.weekdays if draft.repeats else [] %}
-      {% for code, name in [('MO','月'),('TU','火'),('WE','水'),('TH','木'),('FR','金'),('SA','土'),('SU','日')] %}
-      <label class="small" style="display:inline-block; margin:0 10px 4px 0">
-        <input type="checkbox" name="repeat_weekdays" value="{{ code }}"
-               {% if code in chosen %}checked{% endif %}> {{ name }}
-      </label>
-      {% endfor %}
-    </p>
-
-    <label class="small muted" for="repeat_until">いつまで（空なら無期限）</label>
-    <input type="date" id="repeat_until" name="repeat_until"
-           value="{{ draft.repeat.until.isoformat() if draft.repeats and draft.repeat.until else '' }}"
-           style="width:100%; padding:10px; font:inherit; color:var(--text);
-                  background:var(--bg); border:1px solid var(--line); border-radius:8px;
-                  margin:4px 0 0">
-  </div>
-
-  <button type="submit">Googleカレンダーに登録する</button>
 </form>
-
-<p style="margin-top:16px"><a href="/events/new" class="muted small">やめて入力に戻る</a></p>
+</div>
 {% endif %}
 {% endblock %}

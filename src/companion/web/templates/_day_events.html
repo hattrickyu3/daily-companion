@@ -1,0 +1,22 @@
+{# 日記の詳細画面の右側に出す「この日の予定」。日記の有無どちらでも使う。 #}
+<section class="card">
+  <div class="card-head">
+    <h2><i data-lucide="calendar-days"></i>この日の予定</h2>
+    <a class="btn btn-icon" href="/events/new" aria-label="予定を追加" title="予定を追加"><i data-lucide="calendar-plus"></i></a>
+  </div>
+  {% if events %}
+  <ul class="events">
+    {% for event in events %}
+    <li>
+      <span class="time">{{ event.time_label() }}</span>
+      <span>
+        {{ event.title }}
+        {% if event.location %}<span class="place"><i data-lucide="map-pin"></i>{{ event.location }}</span>{% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">予定はありません。</p>
+  {% endif %}
+</section>

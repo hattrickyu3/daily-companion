@@ -2,18 +2,27 @@
 {% block title %}週次 — daily-companion{% endblock %}
 
 {% block content %}
+<div class="page-head">
+  <div>
+    <h1>週次レポート</h1>
+    {% if reviews %}<p class="page-sub">{{ reviews|length }}週分</p>{% endif %}
+  </div>
+  <div class="actions">
+    <a class="btn" href="/entries"><i data-lucide="notebook-text"></i>日記一覧</a>
+  </div>
+</div>
+
 {% if not reviews %}
-<div class="card">
-  <p class="muted" style="margin:0">
-    まだ週次レポートがありません。毎週日曜21:00に、その週の日記からまとめて作られます。
-  </p>
+<div class="notice">
+  <i data-lucide="info"></i>
+  <p>まだ週次レポートがありません。毎週日曜21:00に、その週の日記からまとめて作られます。</p>
 </div>
 {% endif %}
 
 {% for review in reviews %}
-<h2>{{ review.label() }}</h2>
-<div class="card"><p class="raw" style="margin:0">{{ review.body }}</p></div>
+<section class="card">
+  <div class="card-head"><h2><i data-lucide="calendar-range"></i>{{ review.label() }}</h2></div>
+  <p class="raw">{{ review.body }}</p>
+</section>
 {% endfor %}
 {% endblock %}
-
-{% block footer %}{% if reviews %}{{ reviews|length }}週分{% endif %}{% endblock %}

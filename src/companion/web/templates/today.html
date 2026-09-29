@@ -2,92 +2,156 @@
 {% block title %}今日 — daily-companion{% endblock %}
 
 {% block content %}
-<p class="date">{{ day.strftime("%Y年%m月%d日") }}</p>
+{% set WD = "月火水木金土日" %}
+{% set news = namespace(count=0) %}
+{% for digest in digests %}{% set news.count = news.count + (digest.sources|length) %}{% endfor %}
 
-{% if briefing %}
-<h2>今朝のブリーフィング</h2>
-<div class="card"><p class="raw" style="margin:0">{{ briefing.body }}</p></div>
-{% endif %}
-
-<h2>今日の予定</h2>
-<div class="card">
-  {% if events %}
-  <ul class="events">
-    {% for event in events %}
-    <li>
-      <span class="time">{{ event.time_label() }}</span>
-      <span>{{ event.title }}{% if event.location %}<span class="muted small"> / {{ event.location }}</span>{% endif %}</span>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="muted small" style="margin:0">予定はありません。</p>
-  {% endif %}
-</div>
-<p><a href="/events/new" class="muted small">＋ 予定を追加する</a></p>
-
-{% if entry %}
-<h2>今日の日記に書き足す</h2>
-<form action="/entries/append" method="post">
-  <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
-  <textarea name="raw_text" placeholder="そのあと何がありましたか。" autocapitalize="sentences"></textarea>
-  <button type="submit">書き足す</button>
-</form>
-<p class="muted small">今ある内容は消えません。要約は全文からまとめ直されます。</p>
-
-<details style="margin-top:18px">
-  <summary class="muted small" style="cursor:pointer">全文を書き直す</summary>
-  <form action="/entries" method="post" style="margin-top:10px">
-    <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
-    <textarea name="raw_text" autocapitalize="sentences">{{ entry.raw_text }}</textarea>
-    <button type="submit">書き直して保存</button>
-  </form>
-  <p class="muted small">こちらは内容がまるごと入れ替わります。</p>
-</details>
-
-{% else %}
-<h2>今日は何をしましたか</h2>
-<form action="/entries" method="post">
-  <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
-  <textarea name="raw_text" placeholder="思いつくまま書いてください。整理はClaudeがやります。"
-            autocapitalize="sentences"></textarea>
-  <button type="submit">保存する</button>
-</form>
-{% endif %}
-
-{% if digests %}
-{% for digest in digests %}
-<h2>ニュース — {{ topic_label(digest.topic) }}</h2>
-<div class="card">
-  {% if digest.sources %}
-  <ul class="plain" style="padding-left:0; list-style:none; margin:0">
-    {% for source in digest.sources %}
-    <li style="margin-bottom:{{ '0' if loop.last else '16px' }}">
-      <a href="{{ source.url }}" target="_blank" rel="noopener noreferrer"
-         style="color:var(--accent); text-decoration:none">{{ source.title }} ↗</a>
-      {% if source.summary %}
-      <p class="small muted" style="margin:2px 0 0">{{ source.summary }}</p>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="raw small muted" style="margin:0">{{ digest.body }}</p>
-  {% endif %}
-</div>
-{% endfor %}
-<p><a href="/news" class="muted small">過去のニュースを表で見る →</a></p>
-{% endif %}
-
-{% if recent %}
-<h2>最近の日記</h2>
-{% for e in recent %}
-<a class="entry-link" href="/entries/{{ e.entry_date.isoformat() }}">
-  <div class="card">
-    <p class="date small" style="margin:0 0 4px">{{ e.entry_date.strftime("%m/%d (%a)") }}</p>
-    <p style="margin:0">{{ e.summary or (e.raw_text[:60] ~ "…") }}</p>
+<div class="page-head">
+  <div>
+    <h1>今日</h1>
+    <p class="page-sub">{{ day.strftime("%Y年%m月%d日") }}（{{ WD[day.weekday()] }}）</p>
   </div>
-</a>
-{% endfor %}
-{% endif %}
+  <div class="actions">
+    <a class="btn" href="/events/new"><i data-lucide="calendar-plus"></i>予定を追加</a>
+    {% if entry %}<a class="btn" href="/entries/{{ day.isoformat() }}"><i data-lucide="eye"></i>今日の日記を見る</a>{% endif %}
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat">
+    <span class="stat-icon"><i data-lucide="calendar-days"></i></span>
+    <div><p class="stat-label">今日の予定</p><p class="stat-value">{{ events|length }}<small>件</small></p></div>
+  </div>
+  <div class="stat">
+    <span class="stat-icon"><i data-lucide="notebook-pen"></i></span>
+    <div><p class="stat-label">今日の日記</p><p class="stat-value">{{ "書いた" if entry else "まだ" }}</p></div>
+  </div>
+  <div class="stat">
+    <span class="stat-icon"><i data-lucide="newspaper"></i></span>
+    <div><p class="stat-label">ニュース</p><p class="stat-value">{{ news.count }}<small>件</small></p></div>
+  </div>
+</div>
+
+<div class="cols">
+  <div class="stack">
+    <section class="card">
+      {% if entry %}
+      <div class="card-head"><h2><i data-lucide="pen-line"></i>今日の日記に書き足す</h2></div>
+      <form action="/entries/append" method="post">
+        <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+        <textarea name="raw_text" placeholder="そのあと何がありましたか。" autocapitalize="sentences" aria-label="書き足す内容"></textarea>
+        <div class="form-foot">
+          <p class="hint">今ある内容は消えません。要約は全文からまとめ直されます。</p>
+          <button type="submit" class="btn btn-primary"><i data-lucide="plus"></i>書き足す</button>
+        </div>
+      </form>
+
+      <details class="more">
+        <summary><i data-lucide="pencil"></i>全文を書き直す</summary>
+        <form action="/entries" method="post">
+          <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+          <textarea name="raw_text" autocapitalize="sentences" aria-label="日記の全文">{{ entry.raw_text }}</textarea>
+          <div class="form-foot">
+            <p class="hint">こちらは内容がまるごと入れ替わります。</p>
+            <button type="submit" class="btn"><i data-lucide="save"></i>書き直して保存</button>
+          </div>
+        </form>
+      </details>
+
+      {% else %}
+      <div class="card-head"><h2><i data-lucide="notebook-pen"></i>今日は何をしましたか</h2></div>
+      <form action="/entries" method="post">
+        <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+        <textarea name="raw_text" placeholder="思いつくまま書いてください。整理はClaudeがやります。"
+                  autocapitalize="sentences" aria-label="今日の日記"></textarea>
+        <div class="form-foot">
+          <p class="hint">保存すると、Claudeが要約・タグ付けをします。</p>
+          <button type="submit" class="btn btn-primary"><i data-lucide="save"></i>保存する</button>
+        </div>
+      </form>
+      {% endif %}
+    </section>
+
+    {% if digests %}
+    <section class="card">
+      <div class="card-head">
+        <h2><i data-lucide="newspaper"></i>今朝のニュース</h2>
+        <a class="btn" href="/news"><i data-lucide="table"></i>過去のニュース</a>
+      </div>
+      <div class="stack">
+        {% for digest in digests %}
+        <div>
+          <p class="tags" style="margin-bottom:8px"><span class="tag"><i data-lucide="tag"></i>{{ topic_label(digest.topic) }}</span></p>
+          {% if digest.sources %}
+          <ul class="news-list">
+            {% for source in digest.sources %}
+            <li>
+              <a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.title }}<i data-lucide="external-link"></i></a>
+              {% if source.summary %}<p class="hint">{{ source.summary }}</p>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="raw hint">{{ digest.body }}</p>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  </div>
+
+  <div class="stack">
+    <section class="card">
+      <div class="card-head">
+        <h2><i data-lucide="calendar-days"></i>今日の予定</h2>
+        <a class="btn btn-icon" href="/events/new" aria-label="予定を追加" title="予定を追加"><i data-lucide="calendar-plus"></i></a>
+      </div>
+      {% if events %}
+      <ul class="events">
+        {% for event in events %}
+        <li>
+          <span class="time">{{ event.time_label() }}</span>
+          <span>
+            {{ event.title }}
+            {% if event.location %}<span class="place"><i data-lucide="map-pin"></i>{{ event.location }}</span>{% endif %}
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="empty">予定はありません。</p>
+      {% endif %}
+    </section>
+
+    {% if briefing %}
+    <section class="card">
+      <div class="card-head"><h2><i data-lucide="sunrise"></i>今朝のブリーフィング</h2></div>
+      <p class="raw">{{ briefing.body }}</p>
+    </section>
+    {% endif %}
+
+    {% if recent %}
+    <section>
+      <div class="card-head">
+        <h2><i data-lucide="notebook-text"></i>最近の日記</h2>
+        <a class="btn" href="/entries"><i data-lucide="arrow-right"></i>すべて見る</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>日付</th><th>要約</th></tr></thead>
+          <tbody>
+            {% for e in recent %}
+            <tr>
+              <td class="date"><a class="row-link" href="/entries/{{ e.entry_date.isoformat() }}">{{ e.entry_date.strftime("%m/%d") }}（{{ WD[e.entry_date.weekday()] }}）</a></td>
+              <td><a class="row-link" href="/entries/{{ e.entry_date.isoformat() }}">{{ e.summary or (e.raw_text[:60] ~ "…") }}</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}

@@ -2,39 +2,64 @@
 {% block title %}日記 — daily-companion{% endblock %}
 
 {% block content %}
+{% set WD = "月火水木金土日" %}
+<div class="page-head">
+  <div>
+    <h1>日記一覧</h1>
+    <p class="page-sub">{% if active_tag %}タグ「{{ active_tag }}」で絞り込み中 / {% endif %}{{ entries|length }}件</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/search"><i data-lucide="search"></i>検索</a>
+    <a class="btn" href="/calendar"><i data-lucide="calendar-days"></i>カレンダー</a>
+    <a class="btn btn-primary" href="/"><i data-lucide="plus"></i>日記を書く</a>
+  </div>
+</div>
+
 {% if tags %}
-<div class="tags" style="margin-bottom:18px">
-  <a class="tag" href="/entries" {% if not active_tag %}style="outline:1px solid var(--accent)"{% endif %}>すべて</a>
+<div class="tags filters">
+  <a class="tag{% if not active_tag %} on{% endif %}" href="/entries">すべて</a>
   {% for name, count in tags %}
-  <a class="tag" href="/entries?tag={{ name }}"
-     {% if active_tag == name %}style="outline:1px solid var(--accent)"{% endif %}>{{ name }} {{ count }}</a>
+  <a class="tag{% if active_tag == name %} on{% endif %}" href="/entries?tag={{ name|urlencode }}">{{ name }} <span class="num">{{ count }}</span></a>
   {% endfor %}
 </div>
 {% endif %}
 
 {% if not entries %}
 <div class="card">
-  <p class="muted" style="margin:0">
+  <p class="empty">
     {% if active_tag %}このタグの日記はありません。{% else %}まだ日記がありません。<a href="/">今日の分</a>から書いてみてください。{% endif %}
   </p>
 </div>
+{% else %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>日付</th><th>要約</th><th>気分</th><th>タグ</th><th class="ops">操作</th></tr>
+    </thead>
+    <tbody>
+      {% for entry in entries %}
+      <tr>
+        <td class="date">{{ entry.entry_date.strftime("%Y/%m/%d") }}（{{ WD[entry.entry_date.weekday()] }}）</td>
+        <td style="min-width:260px">
+          <a class="row-link" href="/entries/{{ entry.entry_date.isoformat() }}">
+            {% if entry.summary %}{{ entry.summary }}
+            {% else %}{{ entry.raw_text[:70] }}{% if entry.raw_text|length > 70 %}…{% endif %}（整理前）
+            {% endif %}
+          </a>
+        </td>
+        <td style="min-width:90px">{{ entry.mood or "" }}</td>
+        <td style="min-width:140px">
+          {% if entry.tags %}
+          <div class="tags">{% for tag in entry.tags %}<a class="tag" href="/entries?tag={{ tag|urlencode }}">{{ tag }}</a>{% endfor %}</div>
+          {% endif %}
+        </td>
+        <td class="ops">
+          <a class="btn btn-icon" href="/entries/{{ entry.entry_date.isoformat() }}" aria-label="開く" title="開く"><i data-lucide="eye"></i></a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endif %}
-
-{% for entry in entries %}
-<a class="entry-link" href="/entries/{{ entry.entry_date.isoformat() }}">
-  <div class="card">
-    <p class="date small" style="margin:0 0 4px">{{ entry.entry_date.strftime("%Y/%m/%d (%a)") }}</p>
-    <p style="margin:0">
-      {% if entry.summary %}{{ entry.summary }}
-      {% else %}<span class="muted">{{ entry.raw_text[:70] }}{% if entry.raw_text|length > 70 %}…{% endif %}</span>
-      {% endif %}
-    </p>
-    {% if entry.tags %}
-    <div class="tags">{% for tag in entry.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</div>
-    {% endif %}
-  </div>
-</a>
-{% endfor %}
 {% endblock %}
-
-{% block footer %}{{ entries|length }}件{% endblock %}

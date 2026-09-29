@@ -33,6 +33,34 @@ class ClaudeResult:
     session_id: str | None
 
 
+# claude -p は認証切れでもJSON本体を返し、result にエラー文が入る（rc=1、stderrは空）。
+# これを普通の応答として扱うと「要約だけが黙って作られない」状態になり、
+# ログを見ても原因がわからない。2026-08-14にOAuthトークンの期限切れで実際に起きた。
+# ここで必ず失敗として扱う。
+AUTH_ERROR_MARKERS = ("authenticate", "oauth", "401", "/login", "api key")
+
+AUTH_ERROR_MESSAGE = (
+    "Claudeの認証が切れています。"
+    "ターミナルで claude を起動し、/login でログインし直してください。"
+)
+
+
+def describe_error(text: str) -> str:
+    """claude が返したエラー文を、対処のわかるメッセージにする."""
+    if any(marker in text.lower() for marker in AUTH_ERROR_MARKERS):
+        return AUTH_ERROR_MESSAGE
+    return f"Claudeがエラーを返しました: {text.strip()[:200]}"
+
+
+def result_from_payload(payload: dict) -> ClaudeResult:
+    """claude -p のJSONを結果にする. エラーを伝えていれば ClaudeError を投げる."""
+    text = payload.get("result") or ""
+    if payload.get("is_error"):
+        log.error("claude returned an error: %s", text[:500])
+        raise ClaudeError(describe_error(text))
+    return ClaudeResult(text=text, session_id=payload.get("session_id"))
+
+
 def find_claude_binary() -> str | None:
     """PATH から claude 実行ファイルを探す. 見つからなければ None."""
     return shutil.which("claude")
@@ -96,7 +124,7 @@ def run_claude(
         log.error("unparseable claude output: %s", stdout[:500])
         raise ClaudeError("Claudeの応答を解釈できませんでした。") from exc
 
-    return ClaudeResult(text=payload.get("result") or "", session_id=payload.get("session_id"))
+    return result_from_payload(payload)
 
 
 def strip_markdown_headings(text: str) -> str:

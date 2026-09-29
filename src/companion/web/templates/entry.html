@@ -7,87 +7,120 @@
 {% endblock %}
 
 {% block content %}
-<p class="date">{{ day.strftime("%Y年%m月%d日 (%a)") }}</p>
+{% set WD = "月火水木金土日" %}
+<div class="page-head">
+  <div>
+    <h1>{{ day.strftime("%Y年%m月%d日") }}（{{ WD[day.weekday()] }}）</h1>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/entries/{{ prev_day.isoformat() }}"><i data-lucide="chevron-left"></i>{{ prev_day.strftime("%m/%d") }}</a>
+    <a class="btn" href="/entries/{{ next_day.isoformat() }}">{{ next_day.strftime("%m/%d") }}<i data-lucide="chevron-right"></i></a>
+    <a class="btn" href="/calendar?month={{ day.strftime('%Y-%m') }}"><i data-lucide="calendar-days"></i>カレンダーに戻る</a>
+  </div>
+</div>
 
 {% if not entry %}
-<h2>この日の日記を書く</h2>
-<form action="/entries" method="post">
-  <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
-  <textarea name="raw_text" placeholder="この日は何がありましたか。あとからでも書けます。"
-            autocapitalize="sentences"></textarea>
-  <button type="submit">保存する</button>
-</form>
-{% else %}
+<div class="cols">
+  <section class="card">
+    <div class="card-head"><h2><i data-lucide="notebook-pen"></i>この日の日記を書く</h2></div>
+    <form action="/entries" method="post">
+      <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+      <textarea name="raw_text" placeholder="この日は何がありましたか。あとからでも書けます。"
+                autocapitalize="sentences" aria-label="この日の日記"></textarea>
+      <div class="form-foot">
+        <p class="hint">保存すると、Claudeが要約・タグ付けをします。</p>
+        <button type="submit" class="btn btn-primary"><i data-lucide="save"></i>保存する</button>
+      </div>
+    </form>
+  </section>
+  {% include "_day_events.html" %}
+</div>
 
-{% if entry.is_structured %}
-<div class="card">
-  <p style="margin:0 0 2px"><strong>{{ entry.summary }}</strong></p>
-  {% if entry.mood %}<p class="muted small" style="margin:0">気分: {{ entry.mood }}</p>{% endif %}
-  {% if entry.tags %}
-  <div class="tags">
-    {% for tag in entry.tags %}<a class="tag" href="/entries?tag={{ tag }}">{{ tag }}</a>{% endfor %}
+{% else %}
+<div class="cols">
+  <div class="stack">
+    {% if entry.is_structured %}
+    <section class="card">
+      <div class="card-head"><h2><i data-lucide="sparkles"></i>要約</h2></div>
+      <p style="font-weight:700">{{ entry.summary }}</p>
+    </section>
+
+    {% if entry.done %}
+    <section class="card">
+      <div class="card-head"><h2><i data-lucide="list-checks"></i>やったこと</h2></div>
+      <ul class="list">{% for item in entry.done %}<li>{{ item }}</li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+
+    {% if entry.insights %}
+    <section class="card">
+      <div class="card-head"><h2><i data-lucide="lightbulb"></i>気づき</h2></div>
+      <ul class="list">{% for item in entry.insights %}<li>{{ item }}</li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+
+    {% if entry.carry_over %}
+    <section class="card">
+      <div class="card-head"><h2><i data-lucide="arrow-right"></i>明日への申し送り</h2></div>
+      <p>{{ entry.carry_over }}</p>
+    </section>
+    {% endif %}
+
+    {% else %}
+    <div class="notice">
+      <i data-lucide="sparkles"></i>
+      <div>
+        <p><strong>Claudeが整理しています…</strong></p>
+        <p class="hint">数十秒かかります。この画面は自動で更新されます。</p>
+      </div>
+    </div>
+    {% endif %}
+
+    <section class="card">
+      <div class="card-head"><h2><i data-lucide="file-text"></i>書いた内容</h2></div>
+      <p class="raw">{{ entry.raw_text }}</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2><i data-lucide="pen-line"></i>書き足す</h2></div>
+      <form action="/entries/append" method="post">
+        <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+        <textarea name="raw_text" placeholder="思い出したことがあれば。" autocapitalize="sentences"
+                  aria-label="書き足す内容" style="min-height:120px"></textarea>
+        <div class="form-foot">
+          <p class="hint">今ある内容は消えません。要約は全文からまとめ直されます。</p>
+          <button type="submit" class="btn btn-primary"><i data-lucide="plus"></i>書き足す</button>
+        </div>
+      </form>
+
+      <details class="more">
+        <summary><i data-lucide="pencil"></i>全文を書き直す</summary>
+        <form action="/entries" method="post">
+          <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
+          <textarea name="raw_text" autocapitalize="sentences" aria-label="日記の全文">{{ entry.raw_text }}</textarea>
+          <div class="form-foot">
+            <p class="hint">こちらは内容がまるごと入れ替わります。</p>
+            <button type="submit" class="btn"><i data-lucide="save"></i>書き直して保存</button>
+          </div>
+        </form>
+      </details>
+    </section>
   </div>
-  {% endif %}
-</div>
 
-{% if entry.done %}
-<h2>やったこと</h2>
-<div class="card"><ul class="plain">{% for item in entry.done %}<li>{{ item }}</li>{% endfor %}</ul></div>
-{% endif %}
-
-{% if entry.insights %}
-<h2>気づき</h2>
-<div class="card"><ul class="plain">{% for item in entry.insights %}<li>{{ item }}</li>{% endfor %}</ul></div>
-{% endif %}
-
-{% if entry.carry_over %}
-<h2>明日への申し送り</h2>
-<div class="card"><p style="margin:0">{{ entry.carry_over }}</p></div>
-{% endif %}
-
-{% else %}
-<div class="card pending">
-  <p style="margin:0">Claudeが整理しています…</p>
-  <p class="muted small" style="margin:4px 0 0">数十秒かかります。この画面は自動で更新されます。</p>
+  <div class="stack">
+    {% if entry.is_structured and (entry.mood or entry.tags) %}
+    <section class="card">
+      <div class="card-head"><h2><i data-lucide="smile"></i>気分とタグ</h2></div>
+      {% if entry.mood %}<p><span class="label" style="display:inline">気分</span>　{{ entry.mood }}</p>{% endif %}
+      {% if entry.tags %}
+      <div class="tags" style="margin-top:10px">
+        {% for tag in entry.tags %}<a class="tag" href="/entries?tag={{ tag|urlencode }}"><i data-lucide="tag"></i>{{ tag }}</a>{% endfor %}
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
+    {% include "_day_events.html" %}
+  </div>
 </div>
 {% endif %}
-
-<h2>書いた内容</h2>
-<div class="card"><p class="raw" style="margin:0">{{ entry.raw_text }}</p></div>
-
-<h2>書き足す</h2>
-<form action="/entries/append" method="post">
-  <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
-  <textarea name="raw_text" placeholder="思い出したことがあれば。" autocapitalize="sentences"></textarea>
-  <button type="submit">書き足す</button>
-</form>
-<p class="muted small">今ある内容は消えません。要約は全文からまとめ直されます。</p>
-
-<details style="margin-top:18px">
-  <summary class="muted small" style="cursor:pointer">全文を書き直す</summary>
-  <form action="/entries" method="post" style="margin-top:10px">
-    <input type="hidden" name="entry_date" value="{{ day.isoformat() }}">
-    <textarea name="raw_text" autocapitalize="sentences">{{ entry.raw_text }}</textarea>
-    <button type="submit">書き直して保存</button>
-  </form>
-  <p class="muted small">こちらは内容がまるごと入れ替わります。</p>
-</details>
-{% endif %}
-
-{% if events %}
-<h2>この日の予定</h2>
-<div class="card">
-  <ul class="events">
-    {% for event in events %}
-    <li><span class="time">{{ event.time_label() }}</span><span>{{ event.title }}</span></li>
-    {% endfor %}
-  </ul>
-</div>
-{% endif %}
-
-<div class="pager">
-  <a href="/entries/{{ prev_day.isoformat() }}">← {{ prev_day.strftime("%m/%d") }}</a>
-  <a href="/calendar?month={{ day.strftime('%Y-%m') }}">暦に戻る</a>
-  <a href="/entries/{{ next_day.isoformat() }}">{{ next_day.strftime("%m/%d") }} →</a>
-</div>
 {% endblock %}

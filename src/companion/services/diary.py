@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 MAX_TAGS = 5
 MAX_LIST_ITEMS = 6
 STRUCTURE_TIMEOUT_SEC = 180
+UNPARSEABLE_REASON = "Claudeの応答を要約として読み取れませんでした"
 
 SYSTEM_PROMPT = (
     "あなたは利用者本人のための日記アシスタントです。"
@@ -91,20 +92,18 @@ def parse_structure(payload: dict) -> StructuredEntry | None:
 
 
 def structure_text(entry_date: date, raw_text: str) -> StructuredEntry | None:
-    """Claudeに日記を構造化させる. 失敗したら None を返す（例外は投げない）."""
+    """Claudeに日記を構造化させる. 応答を読めなければ None.
+
+    Raises:
+        ClaudeError: 実行そのものに失敗したとき（認証切れ・タイムアウトなど）.
+    """
     prompt = PROMPT_TEMPLATE.format(
         entry_date=entry_date.isoformat(),
         raw_text=raw_text,
         max_items=MAX_LIST_ITEMS,
         max_tags=MAX_TAGS,
     )
-    try:
-        result = run_claude(
-            prompt, system_prompt=SYSTEM_PROMPT, timeout_sec=STRUCTURE_TIMEOUT_SEC
-        )
-    except ClaudeError as exc:
-        log.warning("structuring failed for %s: %s", entry_date, exc)
-        return None
+    result = run_claude(prompt, system_prompt=SYSTEM_PROMPT, timeout_sec=STRUCTURE_TIMEOUT_SEC)
 
     payload = extract_json_block(result.text)
     if payload is None:
@@ -124,11 +123,23 @@ def append_entry(conn: sqlite3.Connection, entry_date: date, additional_text: st
     return append_raw_text(conn, entry_date, additional_text)
 
 
-def structure_entry(conn: sqlite3.Connection, entry_id: int, entry_date: date, raw_text: str) -> bool:
-    """保存済みのエントリを構造化して反映する. 反映できたら True."""
-    structured = structure_text(entry_date, raw_text)
+def structure_entry(
+    conn: sqlite3.Connection, entry_id: int, entry_date: date, raw_text: str
+) -> str | None:
+    """保存済みのエントリを構造化して反映する. 成功なら None, 失敗ならその理由を返す.
+
+    理由を文字列で返すのは、呼び出し側が利用者に伝えられるようにするため。
+    黙って要約が付かないと、原因が何日も気づかれない。
+    """
+    try:
+        structured = structure_text(entry_date, raw_text)
+    except ClaudeError as exc:
+        log.warning("structuring failed for %s: %s", entry_date, exc)
+        return str(exc)
+
     if structured is None:
-        return False
+        return UNPARSEABLE_REASON
+
     apply_structure(conn, entry_id, structured)
     log.info("structured entry %s (%s)", entry_id, entry_date)
-    return True
+    return None

@@ -30,6 +30,8 @@ from companion.db.repository import (
 from companion.db.reviews import list_reviews
 from companion.services.diary import append_entry, save_entry, structure_entry
 from companion.integrations.calendar_google import CalendarError
+from companion.integrations.notify import send_notification
+from companion.links import app_url
 from companion.services.event_draft import EventDraft, Recurrence, build_recurrence
 from companion.services.event_draft import parse as parse_event
 from companion.services.event_register import register as register_event
@@ -40,22 +42,50 @@ from companion.services.month_view import month_bounds, parse_month
 from companion.services.news import topic_label
 from companion.services.news_history import build as build_news_history
 from companion.services.schedule import get_events_for
+from companion.web.notes_routes import router as notes_router
 
 log = logging.getLogger(__name__)
+
+STRUCTURE_FAILURE_PRIORITY = 4
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 app = FastAPI(title="daily-companion", docs_url=None, redoc_url=None)
+app.include_router(notes_router)
+
+
+def _notify_structuring_failure(entry_date: date, reason: str) -> None:
+    """要約に失敗したことを本人に知らせる.
+
+    画面上は原文だけが残り、見た目には「まだ処理中」と区別が付かない。
+    黙って落ちると認証切れに何日も気づけないので、必ず通知する。
+    """
+    try:
+        send_notification(
+            f"{entry_date.isoformat()} の日記の要約に失敗しました。\n"
+            f"{reason}\n"
+            "原文は保存されています。",
+            title="要約に失敗しました",
+            priority=STRUCTURE_FAILURE_PRIORITY,
+            tags=["warning"],
+            click_url=app_url(f"/entries/{entry_date.isoformat()}"),
+        )
+    except Exception:  # noqa: BLE001 - 通知が飛ばないだけで保存は完了している
+        log.exception("could not notify structuring failure for %s", entry_date)
 
 
 def _structure_in_background(entry_id: int, entry_date: date, raw_text: str) -> None:
     """バックグラウンドでClaudeに構造化させる. 失敗しても原文は残る."""
     try:
         with session() as conn:
-            structure_entry(conn, entry_id, entry_date, raw_text)
-    except Exception:  # noqa: BLE001 - バックグラウンドでの失敗はログのみ
+            reason = structure_entry(conn, entry_id, entry_date, raw_text)
+    except Exception as exc:  # noqa: BLE001 - バックグラウンドで落ちても保存済みの原文は守る
         log.exception("background structuring failed for entry %s", entry_id)
+        reason = str(exc)
+
+    if reason:
+        _notify_structuring_failure(entry_date, reason)
 
 
 @app.get("/", response_class=HTMLResponse)

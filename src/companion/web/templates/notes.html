@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{% if searching %}「{{ query }}」の検索 — {% endif %}ノート — daily-companion{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>ノート</h1>
+    {% if searching %}<p class="page-sub">「{{ query }}」を含むノート {{ hits|length }}件</p>
+    {% elif groups %}<p class="page-sub">{{ groups|length }}フォルダ</p>{% endif %}
+  </div>
+</div>
+
+{% if not configured %}
+<div class="notice warn">
+  <i data-lucide="triangle-alert"></i>
+  <p>ノートのフォルダが設定されていません。<code>.env</code> の <code>NOTES_DIR</code> にObsidianの保管庫のフォルダを書いてください。</p>
+</div>
+{% else %}
+<form class="note-search" action="/notes" method="get" role="search">
+  <input type="search" name="q" value="{{ query }}" placeholder="ノートを検索（スペースで区切ると全部を含むもの）" aria-label="ノートを検索" enterkeyhint="search">
+  <button class="btn btn-primary" type="submit"><i data-lucide="search"></i>検索</button>
+  {% if searching %}<a class="btn" href="/notes"><i data-lucide="x"></i>クリア</a>{% endif %}
+</form>
+{% endif %}
+
+{% if searching %}
+  {% if not hits %}
+  <div class="notice">
+    <i data-lucide="info"></i>
+    <p>「{{ query }}」を含むノートは見つかりませんでした。</p>
+  </div>
+  {% endif %}
+  {% for hit in hits %}
+  <section class="card hit">
+    <a class="hit-title" href="/notes/view/{{ hit.note.path|urlencode }}"><i data-lucide="file-text"></i>{{ hit.note.name }}</a>
+    <p class="hit-meta">{{ hit.folder or "フォルダの外" }}{% if hit.count %} ・ {{ hit.count }}か所{% endif %}</p>
+    {% for snippet in hit.snippets %}
+    <p class="hit-line">{% for segment in snippet %}{% if segment.hit %}<mark>{{ segment.text }}</mark>{% else %}{{ segment.text }}{% endif %}{% endfor %}</p>
+    {% endfor %}
+  </section>
+  {% endfor %}
+{% else %}
+  {% if configured and not groups %}
+  <div class="notice">
+    <i data-lucide="info"></i>
+    <p>まだノートがありません。Obsidianでノート（.md）を作ると、ここに出てきます。</p>
+  </div>
+  {% endif %}
+  {% for group in groups %}
+  <section class="card">
+    <div class="card-head">
+      <h2><i data-lucide="folder"></i>{{ group.folder or "フォルダの外" }}<span class="count">{{ group.notes|length }}枚</span></h2>
+    </div>
+    <ul class="note-list">
+      {% for note in group.notes %}
+      <li><a href="/notes/view/{{ note.path|urlencode }}"><i data-lucide="file-text"></i>{{ note.name }}</a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+{% endif %}
+{% endblock %}
+
+{% block head %}
+<style>
+  .note-search { display: flex; gap: 8px; margin-bottom: 14px; }
+  .note-search input { flex: 1; min-width: 0; }
+  ul.note-list { list-style: none; margin: 0; padding: 0; }
+  ul.note-list li + li { border-top: 1px solid var(--line); }
+  ul.note-list a { display: flex; align-items: center; gap: 8px; padding: 10px 2px; font-weight: 700; text-decoration: none; }
+  ul.note-list a:hover, .hit-title:hover { text-decoration: underline; }
+  .hit-title { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 700; text-decoration: none; }
+  .hit-meta { font-size: 14px; font-weight: 600; margin: 2px 0 6px; }
+  .hit-line { font-size: 15px; line-height: 1.6; padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  mark { background: var(--warn); color: var(--text); padding: 0 2px; border-radius: 2px; }
+</style>
+{% endblock %}

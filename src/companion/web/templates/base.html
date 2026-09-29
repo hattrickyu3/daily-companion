@@ -3,96 +3,249 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="light">
 <title>{% block title %}daily-companion{% endblock %}</title>
+{# 見た目は ~/.claude/skills/my-web-style（SmartHR風）に合わせている。
+   補足もグレーにせず本文と同じ色で書き、違いは大きさと太さで出す。
+   アニメーションは入れない。 #}
 <style>
   :root {
-    --bg: #fbfaf8; --card: #ffffff; --text: #23201d; --muted: #6f6a64;
-    --line: #e5e1db; --accent: #b4643c; --accent-soft: #f6ece6;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #17161a; --card: #201f24; --text: #ece9e4; --muted: #a09a92;
-      --line: #33313a; --accent: #e0885c; --accent-soft: #2c2530;
-    }
+    --bg: #F8F7F6; --surface: #FFFFFF; --text: #23221E;
+    --main: #0077C7; --main-hover: #005FA0; --main-soft: #E6F2FA;
+    --brand: #00C4CC; --line: #D6D3D0; --th: #EDEBE8; --group: #F2F1F0;
+    --danger: #E01E5A; --warn: #FFCC17; --ok: #0A7D3E;
   }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif;
-    line-height: 1.7; font-size: 16px;
-    padding: 0 16px calc(32px + env(safe-area-inset-bottom));
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
+    font-size: 16px; line-height: 1.5;
   }
-  .wrap { max-width: 680px; margin: 0 auto; }
-  header {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 12px; padding: 18px 0 14px; border-bottom: 1px solid var(--line); margin-bottom: 20px;
+  a { color: var(--main); }
+  a:hover { color: var(--main-hover); }
+  p { margin: 0; }
+  :focus-visible { outline: 2px solid var(--main); outline-offset: 1px; }
+  [data-lucide], svg.lucide { width: 18px; height: 18px; stroke-width: 1.9; flex: none; }
+
+  /* ---- ヘッダー ---- */
+  .top {
+    position: sticky; top: 0; z-index: 10;
+    height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--line);
   }
-  header h1 { font-size: 17px; margin: 0; letter-spacing: .02em; }
-  header h1 a { color: var(--text); text-decoration: none; }
-  nav { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 14px; justify-content: flex-end; }
-  nav a { color: var(--muted); text-decoration: none; }
-  nav a:hover, nav a.on { color: var(--accent); }
-  h2 { font-size: 15px; color: var(--muted); font-weight: 600; margin: 26px 0 10px; letter-spacing: .04em; }
-  .card {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: 12px; padding: 16px; margin-bottom: 12px;
+  .top-left, .top-right { display: flex; align-items: center; gap: 8px; }
+  .logo { display: flex; align-items: center; gap: 8px; color: var(--text); text-decoration: none; font-weight: 700; font-size: 16px; }
+  .logo:hover { color: var(--text); }
+  .logo-mark {
+    width: 28px; height: 28px; border-radius: 6px; background: var(--brand); color: #fff;
+    display: flex; align-items: center; justify-content: center;
   }
-  .muted { color: var(--muted); }
-  .small { font-size: 14px; }
-  textarea {
-    width: 100%; min-height: 180px; padding: 14px; font: inherit; line-height: 1.7;
-    color: var(--text); background: var(--card);
-    border: 1px solid var(--line); border-radius: 12px; resize: vertical;
+  .logo-mark svg.lucide { width: 17px; height: 17px; }
+  .top .menu-toggle { display: none; }
+
+  /* ---- 本体（サイドバー＋メイン） ---- */
+  .shell { display: flex; min-height: calc(100vh - 52px); }
+  .side {
+    width: 200px; flex: none; background: var(--surface); border-right: 1px solid var(--line);
+    padding: 12px 8px;
   }
-  textarea:focus, input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-  button {
-    font: inherit; font-weight: 600; padding: 13px 22px; border: none; border-radius: 10px;
-    background: var(--accent); color: #fff; cursor: pointer; width: 100%; margin-top: 12px;
+  .side nav { position: sticky; top: 64px; display: flex; flex-direction: column; gap: 2px; }
+  .side a {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px;
+    color: var(--text); text-decoration: none; font-size: 15px; font-weight: 600; line-height: 1.2;
   }
-  input[type="search"] {
-    width: 100%; padding: 12px 14px; font: inherit; color: var(--text);
-    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  .side a:hover { background: var(--group); color: var(--text); }
+  .side a.on { background: var(--main-soft); color: var(--main); font-weight: 700; }
+  .side hr { border: none; border-top: 1px solid var(--line); margin: 8px 4px; }
+
+  main { flex: 1; min-width: 0; padding: 20px 20px calc(28px + env(safe-area-inset-bottom)); }
+  .main-inner { max-width: 1120px; }
+
+  /* ---- 見出し ---- */
+  .page-head {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+    gap: 12px; margin-bottom: 14px;
   }
-  ul.events { list-style: none; padding: 0; margin: 0; }
-  ul.events li { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); }
-  ul.events li:last-child { border-bottom: none; }
-  ul.events .time { color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 92px; }
-  ul.plain { margin: 0; padding-left: 1.2em; }
-  ul.plain li { margin: 3px 0; }
-  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .page-head h1 { font-size: 24px; line-height: 1.25; margin: 0; font-weight: 700; }
+  .page-sub { font-size: 15px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  h2 {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 19px; line-height: 1.25; font-weight: 700; margin: 0 0 12px;
+  }
+  h2 .count { font-size: 15px; font-weight: 600; }
+
+  /* ---- ボタン ---- */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    min-height: 36px; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--text); font: inherit; font-size: 15px; font-weight: 700;
+    line-height: 1.2; text-decoration: none; cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover { background: var(--group); color: var(--text); }
+  .btn-primary { background: var(--main); border-color: var(--main); color: #fff; }
+  .btn-primary:hover { background: var(--main-hover); border-color: var(--main-hover); color: #fff; }
+  .btn-icon { width: 32px; height: 32px; min-height: 32px; padding: 0; }
+  .btn-icon.ghost { border-color: transparent; background: transparent; }
+  .btn-icon.ghost:hover { background: var(--group); }
+  .btn[disabled] { opacity: .5; cursor: default; }
+
+  /* ---- 面 ---- */
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px; }
+  .card + .card, .stack > * + * { margin-top: 14px; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  .card-head h2 { margin: 0; }
+  .cols { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+  @media (min-width: 1024px) { .cols { grid-template-columns: minmax(0, 1fr) 360px; } }
+
+  /* ---- 数値カード ---- */
+  .stats { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 14px; }
+  .stat { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; }
+  .stat-icon {
+    width: 40px; height: 40px; border-radius: 6px; background: var(--main-soft); color: var(--main);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .stat-label { font-size: 14px; font-weight: 600; line-height: 1.2; }
+  .stat-value { font-size: 24px; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; }
+  .stat-value small { font-size: 14px; font-weight: 600; margin-left: 2px; }
+
+  /* ---- 表 ---- */
+  .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th {
+    background: var(--th); text-align: left; font-weight: 700; white-space: nowrap;
+    padding: 10px 12px; border-bottom: 1px solid var(--line);
+  }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--group); }
+  .nowrap { white-space: nowrap; }
+  .num, .date { font-variant-numeric: tabular-nums; }
+  td.date { white-space: nowrap; font-weight: 600; }
+  td.ops { width: 1%; white-space: nowrap; text-align: right; padding-top: 6px; padding-bottom: 6px; }
+  .row-link { color: var(--text); text-decoration: none; }
+  .row-link:hover { color: var(--main); text-decoration: underline; }
+
+  /* ---- タグ ---- */
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
   .tag {
-    font-size: 13px; padding: 3px 10px; border-radius: 999px;
-    background: var(--accent-soft); color: var(--accent); text-decoration: none;
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
+    color: var(--text); font-size: 14px; font-weight: 600; line-height: 1.4; text-decoration: none; white-space: nowrap;
   }
-  .entry-link { display: block; text-decoration: none; color: inherit; }
-  .entry-link:hover .card { border-color: var(--accent); }
-  .date { font-variant-numeric: tabular-nums; font-weight: 600; }
-  .raw { white-space: pre-wrap; word-break: break-word; }
-  .pager { display: flex; justify-content: space-between; margin-top: 22px; font-size: 14px; }
-  .pager a { color: var(--muted); text-decoration: none; }
-  .pending { border-color: var(--accent); }
-  footer { margin-top: 34px; color: var(--muted); font-size: 13px; text-align: center; }
+  .tag svg.lucide { width: 14px; height: 14px; }
+  a.tag:hover { background: var(--group); color: var(--text); }
+  .tag.on { background: var(--main-soft); border-color: var(--main); color: var(--main); }
+  .tag.ok { color: var(--ok); }
+  .tag.ng { color: var(--danger); }
+  .filters { margin-bottom: 14px; }
+
+  /* ---- 入力 ---- */
+  label, .label { display: block; font-size: 14px; font-weight: 700; margin-bottom: 4px; line-height: 1.2; }
+  textarea, input[type="text"], input[type="search"], input[type="date"], input[type="time"], input[type="number"], select {
+    width: 100%; padding: 8px 10px; font: inherit; color: var(--text); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  textarea { min-height: 170px; line-height: 1.6; resize: vertical; }
+  textarea:focus, input:focus, select:focus { outline: 2px solid var(--main); outline-offset: -1px; border-color: var(--main); }
+  .form-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; }
+  .hint { font-size: 14px; }
+  .fields { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 640px) { .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fields .wide { grid-column: 1 / -1; } }
+  details.more { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+  details.more summary { cursor: pointer; font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 6px; list-style: none; }
+  details.more summary::-webkit-details-marker { display: none; }
+  details.more[open] summary { margin-bottom: 10px; }
+
+  /* ---- お知らせの帯 ---- */
+  .notice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 6px; background: var(--main-soft); font-size: 15px; }
+  .notice svg.lucide { color: var(--main); margin-top: 2px; }
+  .notice.warn { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--warn); }
+  .notice.warn svg.lucide { color: var(--text); }
+  .notice.error { background: var(--surface); border: 1px solid var(--danger); }
+  .notice.error svg.lucide, .notice.error strong { color: var(--danger); }
+  .notice + * { margin-top: 14px; }
+
+  /* ---- 本文 ---- */
+  .raw { white-space: pre-wrap; word-break: break-word; line-height: 1.7; }
+  ul.list { margin: 0; padding-left: 1.3em; }
+  ul.list li + li { margin-top: 4px; }
+  .empty { font-size: 15px; }
+  ul.events { list-style: none; margin: 0; padding: 0; font-size: 15px; }
+  ul.events li { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  ul.events li:first-child { padding-top: 0; }
+  ul.events li:last-child { border-bottom: none; padding-bottom: 0; }
+  ul.events.meta .time { min-width: 0; display: flex; align-items: center; }
+  .weekdays { display: flex; flex-wrap: wrap; gap: 6px; }
+  .weekdays label.tag { margin: 0; padding: 5px 10px; font-size: 15px; gap: 6px; cursor: pointer; }
+  ul.events .time { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 96px; }
+  .place { display: inline-flex; align-items: center; gap: 3px; font-size: 14px; margin-left: 6px; }
+  .place svg.lucide { width: 14px; height: 14px; }
+  ul.news-list { list-style: none; margin: 0; padding: 0; }
+  ul.news-list li + li { margin-top: 12px; }
+  ul.news-list a { font-weight: 700; text-decoration: none; }
+  ul.news-list a:hover { text-decoration: underline; }
+  ul.news-list a svg.lucide, td a svg.lucide { width: 14px; height: 14px; margin-left: 4px; vertical-align: -2px; }
+  ul.news-list .hint { margin-top: 2px; }
+  .page-foot { margin-top: 16px; font-size: 14px; font-weight: 600; }
+
+  /* ---- スマホ幅：サイドバーはメニューボタンに畳む ---- */
+  @media (max-width: 767px) {
+    .top .menu-toggle { display: inline-flex; }
+    .side { display: none; position: fixed; top: 52px; left: 0; right: 0; z-index: 9; width: auto; border-right: none; border-bottom: 1px solid var(--line); box-shadow: 0 4px 12px rgba(35, 34, 30, .12); }
+    body.menu-open .side { display: block; }
+    .side nav { position: static; }
+    main { padding: 16px 16px calc(28px + env(safe-area-inset-bottom)); }
+    .page-head h1 { font-size: 22px; }
+    .stats { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+    .stat { padding: 8px 10px; }
+    .stat-icon { display: none; }
+    .stat-value { font-size: 20px; }
+  }
 </style>
 {# 画面ごとの追加スタイルは共通スタイルより後に置く。
    先に置くと、同じ強さの指定で共通側に負けて上書きできない。 #}
 {% block head %}{% endblock %}
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1><a href="/">daily-companion</a></h1>
+{% set path = request.url.path %}
+{% macro nav(href, icon, label, on) -%}
+<a href="{{ href }}"{% if on %} class="on" aria-current="page"{% endif %}><i data-lucide="{{ icon }}"></i>{{ label }}</a>
+{%- endmacro %}
+<header class="top">
+  <div class="top-left">
+    <button type="button" class="btn btn-icon ghost menu-toggle" aria-label="メニュー" title="メニュー"
+            onclick="document.body.classList.toggle('menu-open')"><i data-lucide="menu"></i></button>
+    <a class="logo" href="/"><span class="logo-mark"><i data-lucide="notebook-pen"></i></span>daily-companion</a>
+  </div>
+  <div class="top-right">
+    <a class="btn btn-icon ghost" href="/search" aria-label="検索" title="検索"><i data-lucide="search"></i></a>
+    <a class="btn btn-icon ghost" href="/status" aria-label="状態" title="状態"><i data-lucide="activity"></i></a>
+  </div>
+</header>
+<div class="shell">
+  <aside class="side">
     <nav>
-      <a href="/">今日</a>
-      <a href="/calendar">暦</a>
-      <a href="/news">ニュース</a>
-      <a href="/reviews">週次</a>
-      <a href="/search">検索</a>
-      <a href="/status">状態</a>
+      {{ nav("/", "house", "今日", path == "/") }}
+      {{ nav("/calendar", "calendar-days", "カレンダー", path.startswith("/calendar") or path.startswith("/events")) }}
+      {{ nav("/entries", "notebook-text", "日記一覧", path.startswith("/entries")) }}
+      {{ nav("/reviews", "calendar-range", "週次レポート", path.startswith("/reviews")) }}
+      {{ nav("/news", "newspaper", "ニュース", path.startswith("/news")) }}
+      {{ nav("/notes", "library", "ノート", path.startswith("/notes")) }}
+      <hr>
+      {{ nav("/search", "search", "検索", path.startswith("/search")) }}
+      {{ nav("/status", "activity", "状態", path.startswith("/status")) }}
     </nav>
-  </header>
-  {% block content %}{% endblock %}
-  <footer>{% block footer %}{% endblock %}</footer>
+  </aside>
+  <main>
+    <div class="main-inner">
+      {% block content %}{% endblock %}
+      <p class="page-foot">{% block footer %}{% endblock %}</p>
+    </div>
+  </main>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/lucide@1.48.0/dist/umd/lucide.min.js"></script>
+<script>if (window.lucide) lucide.createIcons();</script>
 </body>
 </html>

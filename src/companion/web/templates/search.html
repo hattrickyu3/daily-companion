@@ -2,24 +2,37 @@
 {% block title %}検索 — daily-companion{% endblock %}
 
 {% block content %}
-<form action="/search" method="get">
-  <input type="search" name="q" value="{{ query }}" placeholder="日記を検索" autofocus>
+{% set WD = "月火水木金土日" %}
+<div class="page-head">
+  <div>
+    <h1>検索</h1>
+    {% if query %}<p class="page-sub">「{{ query }}」の検索結果 {{ results|length }}件</p>{% endif %}
+  </div>
+</div>
+
+<form action="/search" method="get" class="card" style="display:flex; gap:8px; margin-bottom:14px">
+  <input type="search" name="q" value="{{ query }}" placeholder="日記を検索（ことば・タグ）" aria-label="検索することば" autofocus>
+  <button type="submit" class="btn btn-primary"><i data-lucide="search"></i>検索する</button>
 </form>
 
 {% if query %}
-<h2>「{{ query }}」の検索結果</h2>
 {% if not results %}
-<div class="card"><p class="muted" style="margin:0">見つかりませんでした。</p></div>
+<div class="card"><p class="empty">見つかりませんでした。</p></div>
+{% else %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>日付</th><th>要約</th><th class="ops">操作</th></tr></thead>
+    <tbody>
+      {% for entry in results %}
+      <tr>
+        <td class="date">{{ entry.entry_date.strftime("%Y/%m/%d") }}（{{ WD[entry.entry_date.weekday()] }}）</td>
+        <td style="min-width:260px"><a class="row-link" href="/entries/{{ entry.entry_date.isoformat() }}">{{ entry.summary or entry.raw_text[:70] }}</a></td>
+        <td class="ops"><a class="btn btn-icon" href="/entries/{{ entry.entry_date.isoformat() }}" aria-label="開く" title="開く"><i data-lucide="eye"></i></a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endif %}
-{% for entry in results %}
-<a class="entry-link" href="/entries/{{ entry.entry_date.isoformat() }}">
-  <div class="card">
-    <p class="date small" style="margin:0 0 4px">{{ entry.entry_date.strftime("%Y/%m/%d (%a)") }}</p>
-    <p style="margin:0">{{ entry.summary or entry.raw_text[:70] }}</p>
-  </div>
-</a>
-{% endfor %}
 {% endif %}
 {% endblock %}
-
-{% block footer %}{% if query %}{{ results|length }}件{% endif %}{% endblock %}

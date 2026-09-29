@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — daily-companion{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    {% if not has_own_title %}<h1>{{ title }}</h1>{% endif %}
+    {% if folder %}<p class="page-sub">{{ folder }}</p>{% endif %}
+  </div>
+  <div class="actions">
+    <a class="btn" href="/notes"><i data-lucide="library"></i>ノート一覧</a>
+  </div>
+</div>
+
+<article class="card note">
+  {{ body|safe }}
+</article>
+{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css">
+<style>
+  .note { line-height: 1.75; overflow-wrap: anywhere; }
+  .note > :first-child { margin-top: 0; }
+  .note h1, .note h2, .note h3, .note h4 { display: block; line-height: 1.35; margin: 1.4em 0 .5em; }
+  .note h1 { font-size: 22px; }
+  .note h2 { font-size: 19px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+  .note h3 { font-size: 17px; }
+  .note p, .note ul, .note ol, .note table, .note blockquote, .note .math.block { margin: 0 0 .9em; }
+  .note ul, .note ol { padding-left: 1.4em; }
+  .note li + li { margin-top: 2px; }
+  .note a { font-weight: 600; }
+  .note .missing { font-weight: 600; text-decoration: underline dotted; }
+  .note img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; margin: 8px 0; }
+  .note table { display: block; overflow-x: auto; width: max-content; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; }
+  .note th, .note td { border-bottom: 1px solid var(--line); }
+  /* スマホ幅で列が潰れて1文字ずつ折り返さないよう、列に最低幅を持たせて横スクロールにする。 */
+  .note td, .note th { min-width: 7em; }
+  .note code { background: var(--group); padding: 1px 4px; border-radius: 4px; font-size: .92em; }
+  .note pre { background: var(--group); padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+  .note pre code { background: none; padding: 0; }
+  .note blockquote { margin-left: 0; padding: 8px 12px; border-left: 4px solid var(--line); background: var(--group); border-radius: 0 6px 6px 0; }
+  .note blockquote.callout { border-left-color: var(--warn); background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--warn); }
+  .note blockquote > :last-child { margin-bottom: 0; }
+  .note .math.block { overflow-x: auto; overflow-y: hidden; }
+  .note hr { border: none; border-top: 1px solid var(--line); margin: 1.2em 0; }
+</style>
+{% endblock %}
+
+{% block footer %}
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js"></script>
+<script>
+  // 数式は印の付いた要素だけを描く。読み込めなくても元の式が文字で残る。
+  if (window.katex) {
+    document.querySelectorAll(".note .math").forEach(function (el) {
+      try {
+        katex.render(el.textContent, el, { displayMode: el.classList.contains("block"), throwOnError: false });
+      } catch (e) { /* 描けない式は文字のまま見せる */ }
+    });
+  }
+</script>
+{% endblock %}

@@ -2,29 +2,37 @@
 {% block title %}予定を追加 — daily-companion{% endblock %}
 
 {% block content %}
-<h2>予定を追加</h2>
+<div class="page-head">
+  <div><h1>予定を追加</h1></div>
+  <div class="actions">
+    <a class="btn" href="/calendar"><i data-lucide="calendar-days"></i>カレンダー</a>
+  </div>
+</div>
 
 {% if request.query_params.get("error") == "calendar" %}
-<div class="card" style="border-color:#d04a3a">
-  <p style="margin:0">Googleカレンダーへの登録に失敗しました。</p>
-  <p class="muted small" style="margin:4px 0 0">
-    カレンダーの共有権限が「予定の変更権限」になっているか確認してください。
-  </p>
+<div class="notice error">
+  <i data-lucide="triangle-alert"></i>
+  <div>
+    <p><strong>Googleカレンダーへの登録に失敗しました。</strong></p>
+    <p class="hint">カレンダーの共有権限が「予定の変更権限」になっているか確認してください。</p>
+  </div>
 </div>
 {% elif request.query_params.get("error") == "input" %}
-<div class="card" style="border-color:#d04a3a">
-  <p style="margin:0">件名と日付は必要です。</p>
+<div class="notice error">
+  <i data-lucide="triangle-alert"></i>
+  <p><strong>件名と日付は必要です。</strong></p>
 </div>
 {% endif %}
 
-<form action="/events/parse" method="post">
-  <textarea name="text" style="min-height:110px" autocapitalize="sentences" autofocus
-            placeholder="明日10時から12時までゼミ&#10;来週の月曜 15:00 面接 渋谷&#10;8/20 終日 合宿"></textarea>
-  <button type="submit">内容を確認する</button>
-</form>
-
-<p class="muted small">
-  そのまま登録はしません。Claudeが読み取った日付と時刻を確認画面で見せるので、
-  間違っていればそこで直せます。
-</p>
+<section class="card" style="max-width:720px">
+  <div class="card-head"><h2><i data-lucide="calendar-plus"></i>予定をふつうの文で書く</h2></div>
+  <form action="/events/parse" method="post">
+    <textarea name="text" style="min-height:110px" autocapitalize="sentences" autofocus aria-label="予定の内容"
+              placeholder="明日10時から12時までゼミ&#10;来週の月曜 15:00 面接 渋谷&#10;8/20 終日 合宿"></textarea>
+    <div class="form-foot">
+      <p class="hint">そのまま登録はしません。読み取った日時を次の画面で確認・修正できます。</p>
+      <button type="submit" class="btn btn-primary"><i data-lucide="arrow-right"></i>内容を確認する</button>
+    </div>
+  </form>
+</section>
 {% endblock %}

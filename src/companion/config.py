@@ -60,6 +60,9 @@ class Config:
     claude_timeout_sec: int
     timezone: ZoneInfo
     db_path: Path = field(default=DB_PATH)
+    # Obsidianの保管庫のフォルダ。スマホからノートを読むための画面で使う。
+    # 空ならノート画面は「未設定」と案内するだけで、ほかの機能には影響しない。
+    notes_dir: Path | None = None
 
     @property
     def has_calendar(self) -> bool:
@@ -112,6 +115,7 @@ def load_config() -> Config:
         raise ConfigError(f"TIMEZONE が不正です: {timezone_name!r}") from exc
 
     key_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
+    notes_dir = os.getenv("NOTES_DIR", "").strip()
 
     return Config(
         ntfy_topic=os.getenv("NTFY_TOPIC", "").strip(),
@@ -125,6 +129,7 @@ def load_config() -> Config:
         news_topics=_validate_news_topics(_split_csv(os.getenv("NEWS_TOPICS"))),
         claude_timeout_sec=_read_int("CLAUDE_TIMEOUT_SEC", DEFAULT_CLAUDE_TIMEOUT_SEC),
         timezone=timezone,
+        notes_dir=Path(notes_dir) if notes_dir else None,
     )
 
 

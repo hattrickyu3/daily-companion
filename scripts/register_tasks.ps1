@@ -17,6 +17,7 @@ $jobs = @(
     @{ Name = 'daily-companion-evening'; Script = 'evening_prompt.bat'; Time = '22:00'; Desc = '夜の日記催促' }
     @{ Name = 'daily-companion-weekly';  Script = 'weekly_review.bat';  Time = '21:00'; Desc = '週次の振り返り'; Weekly = 'Sunday' }
     @{ Name = 'daily-companion-web';     Script = 'run_web.ps1';        Desc = 'Webアプリの常駐'; AtStartup = $true; LongRunning = $true }
+    @{ Name = 'daily-companion-catchup'; Script = 'morning_catchup.bat'; Desc = '朝のブリーフィングの取りこぼしを起動時に拾う'; AtStartup = $true; BootDelay = 'PT5M' }
 )
 
 foreach ($job in $jobs) {
@@ -36,6 +37,12 @@ foreach ($job in $jobs) {
 
     if ($job.AtStartup) {
         $trigger = New-ScheduledTaskTrigger -AtStartup
+        if ($job.BootDelay) {
+            # 起動直後はネットワークもuvの準備も整っていないので少し待つ。
+            # Windows Updateが再起動を連続で挟む場合、待っている間に次の再起動が
+            # 来て打ち切られるが、最後の起動の分が走れば目的は果たせる。
+            $trigger.Delay = $job.BootDelay
+        }
     } elseif ($job.Weekly) {
         $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $job.Weekly -At $job.Time
     } else {
