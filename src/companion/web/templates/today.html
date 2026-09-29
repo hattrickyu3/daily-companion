@@ -109,11 +109,12 @@
         <a class="btn btn-icon" href="/mail" aria-label="メールの一覧" title="メールの一覧"><i data-lucide="mail"></i></a>
       </div>
       {% if mail_actions %}
-      <ul class="events">
+      <ul class="events mail-actions">
         {% for mail in mail_actions %}
         {% set left = mail.days_left(day) %}
         <li>
-          <span class="time">{% if mail.deadline %}〆{{ mail.deadline.strftime("%m/%d") }}{% if left == 0 %} 今日{% else %} あと{{ left }}日{% endif %}{% else %}締切なし{% endif %}</span>
+          {# スマホ幅でも要約に重ならないよう、締切と残り日数は2行に分ける #}
+          <span class="time">{% if mail.deadline %}〆{{ mail.deadline.strftime("%m/%d") }}<small>{% if left == 0 %}今日まで{% else %}あと{{ left }}日{% endif %}</small>{% else %}締切なし{% endif %}</span>
           <span>{{ mail.summary }}<span class="place"><i data-lucide="user"></i>{{ mail.sender }}</span></span>
         </li>
         {% endfor %}

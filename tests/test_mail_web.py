@@ -85,7 +85,7 @@ def test_今日の画面に要対応メールが出る(client) -> None:
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "要対応メール" in response.text
+    assert "要対応メール</h2>" in response.text
     assert "GPS-Academic受検" in response.text
     assert "就活コラム" not in response.text
 
@@ -107,4 +107,6 @@ def test_未設定なら今日の画面にメール欄を出さない(client, mo
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "要対応メール" not in response.text
+    # 文字列だけで見るとスタイルのコメントにも引っかかるので、欄の要素そのもので確かめる
+    assert "要対応メール</h2>" not in response.text
+    assert 'class="events mail-actions"' not in response.text
