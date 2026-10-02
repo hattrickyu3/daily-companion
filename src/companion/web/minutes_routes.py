@@ -31,7 +31,7 @@ from companion.db.connection import apply_schema, session
 from companion.integrations.diarization import Diarizer
 from companion.integrations.whisper import Transcriber
 from companion.services.minutes_audio import AudioError, AudioStore
-from companion.services.minutes_draft import SECTIONS, section_label
+from companion.services.minutes_draft import SECTIONS, normalize_draft, section_label
 from companion.services.minutes_runtime import M4A_NAME, MinutesRuntime
 from companion.services.minutes_speakers import parse_participants
 
@@ -118,7 +118,7 @@ def snapshot(runtime: MinutesRuntime, meeting_id: int) -> dict[str, Any]:
         "type": "snapshot",
         "status": meeting.status,
         "error": meeting.error,
-        "draft": meeting.draft,
+        "draft": normalize_draft(meeting.draft),
         "segments": [runtime.segment_event(s) for s in segments],
     }
 

@@ -5,7 +5,7 @@ Haikuには議事録を丸ごと書き直させず、変わる見出しだけを
 
     @@ 決まったこと        ← この見出しの中身を丸ごと置き換える
     - 中間発表は10月9日
-    @@+ 話し合ったこと     ← この見出しの末尾に書き足す
+    @@+ 話したこと         ← この見出しの末尾に書き足す
     - 田中さんが実験結果を報告した
 
 応答は1文字ずつ届くので、途中まで届いた状態でも「いまどこを書いているか」と
@@ -16,9 +16,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-SECTIONS = ("要点", "話し合ったこと", "決まったこと", "宿題", "次回", "保留・質問")
-# 画面に出す見出し. 宿題は何を書く欄かを見出しで伝える。
-SECTION_LABELS = {"宿題": "宿題（誰が・何を・いつまでに）"}
+# ゼミ以外（家族との会話、打ち合わせなど）にも使うので、ゼミ向けの言葉（宿題・次回）は避ける.
+SECTIONS = ("要点", "話したこと", "決まったこと", "やること", "次に向けて", "保留・疑問")
+# 画面に出す見出し. やることは何を書く欄かを見出しで伝える。
+SECTION_LABELS = {"やること": "やること（誰が・何を・いつまでに）"}
+# 2026-10-03 までの見出しの名前. 前に作った下書きと、Haikuが古い名前で返したときに読み替える。
+LEGACY_SECTIONS = {"話し合ったこと": "話したこと", "宿題": "やること", "次回": "次に向けて", "保留・質問": "保留・疑問"}
 
 REPLACE = "replace"
 APPEND = "append"
@@ -54,7 +57,19 @@ def _normalize_section(name: str) -> str | None:
     for section in SECTIONS:
         if name == section or name.startswith(section):
             return section
+    for old, new in LEGACY_SECTIONS.items():
+        if name == old or name.startswith(old):
+            return new
     return None
+
+
+def normalize_draft(draft: dict[str, str]) -> dict[str, str]:
+    """前の見出しの名前で保存された下書きを、今の名前に読み替える. 元の下書きは変えない."""
+    renamed: dict[str, str] = {}
+    for name, text in draft.items():
+        section = LEGACY_SECTIONS.get(name, name)
+        renamed[section] = "\n".join(filter(None, [renamed.get(section, ""), text]))
+    return renamed
 
 
 def parse_ops(text: str, *, final: bool = True) -> list[EditOp]:
@@ -109,5 +124,6 @@ def editing_section(ops: list[EditOp]) -> str | None:
 
 def render_markdown(draft: dict[str, str]) -> str:
     """下書きをMarkdownにする. 清書の材料と、清書に失敗したときの代わりに使う."""
+    draft = normalize_draft(draft)
     blocks = [f"## {section_label(s)}\n\n{draft[s].strip()}" for s in SECTIONS if draft.get(s, "").strip()]
     return "\n\n".join(blocks)

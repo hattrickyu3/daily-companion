@@ -26,6 +26,7 @@ from companion.services.minutes_draft import (
     SECTIONS,
     apply_ops,
     editing_section,
+    normalize_draft,
     parse_ops,
     section_label,
 )
@@ -45,10 +46,14 @@ PUBLISH_INTERVAL_SEC = 0.15
 IDLE_CLOSE_SEC = 20 * 60
 MAX_BACKOFF_SEC = 60
 
-SYSTEM_PROMPT = f"""あなたは大学のゼミの議事録係です。発言の文字起こしが少しずつ届きます。
-届くたびに、議事録のうち変わる見出しだけを書き直してください。
+SYSTEM_PROMPT = f"""あなたは会話や会議の記録係です。発言の文字起こしが少しずつ届きます。
+届くたびに、記録のうち変わる見出しだけを書き直してください。
 
-議事録の見出し: {" / ".join(SECTIONS)}
+場面はゼミ・授業・打ち合わせ・家族や友人との会話などいろいろです。
+最初に渡す「会議の名前」と話の中身から場面を考え、それに合った書き方にしてください。
+会議らしくない場面（雑談など）では、決まったこと・やることを無理に作らない。
+
+記録の見出し: {" / ".join(SECTIONS)}
 
 出力の形式（これ以外は一切書かない。前置き・説明・コードブロックは不要）:
 @@ 見出し     その見出しの中身を丸ごと置き換える
@@ -57,13 +62,13 @@ SYSTEM_PROMPT = f"""あなたは大学のゼミの議事録係です。発言の
 
 書き方:
 - 中身は「- 」で始まる箇条書き。1項目1行、40字くらいまで。
-- 話し合ったことは原則 @@+ で書き足す。直前の項目を直すときだけ @@ で全体を置き換える。
+- 話したことは原則 @@+ で書き足す。直前の項目を直すときだけ @@ で全体を置き換える。
 - @@+ で書き足すのは、今回届いた発言の内容だけ。前に書いた項目は繰り返さない。
 - 書くことがない見出しには触れない（「なし」「変更なし」と中身に書かない）。
-- 要点は会議全体を3行以内で。話題が変わったときだけ更新する。
-- 決まったこと・宿題・次回は、はっきり決まったこと・頼まれたことだけ書く。
-- 宿題は「誰が・何を・いつまでに」。わからない部分は「（未定）」と書く。
-- 保留・質問には、結論が出なかった論点と、答えが出ていない質問を書く。
+- 要点は全体を3行以内で。話題が変わったときだけ更新する。
+- 決まったこと・やること・次に向けては、はっきり決まったこと・頼まれたこと・約束したことだけ書く。
+- やることは「誰が・何を・いつまでに」。わからない部分は「（未定）」と書く。
+- 保留・疑問には、結論が出なかった話と、答えが出ていない疑問を書く。
 - 文字起こしには聞き間違いがある。文脈から明らかな誤りは直してよいが、話されていないことは書かない。
 - 人の名前は、文字起こしで呼ばれていてわかるときだけ書く。
 - 相づちや雑談だけなら「@@ 変更なし」。
@@ -77,14 +82,17 @@ def format_lines(segments: list[Segment], tz: ZoneInfo) -> str:
     )
 
 
-def build_message(lines: str, draft: dict[str, str], *, fresh: bool) -> str:
-    """Haikuに渡す1回分の本文. 起動し直した直後は、今の議事録も渡して続きから書かせる."""
+def build_message(lines: str, draft: dict[str, str], *, fresh: bool, title: str = "") -> str:
+    """Haikuに渡す1回分の本文. 起動し直した直後は、会議の名前と今の記録も渡して続きから書かせる."""
     if not fresh:
         return f"新しい発言（この内容だけを反映する）:\n{lines}"
     current = "\n".join(
         f"@@ {s}\n{draft[s].strip()}" for s in SECTIONS if draft.get(s, "").strip()
     ) or "（まだ何もない）"
-    return f"これまでの議事録:\n{current}\n\n新しい発言（この内容だけを反映する）:\n{lines}"
+    return (
+        f"会議の名前: {title or '（なし）'}\n\n"
+        f"これまでの記録:\n{current}\n\n新しい発言（この内容だけを反映する）:\n{lines}"
+    )
 
 
 class LiveEditor:
@@ -163,9 +171,9 @@ class LiveEditor:
             self._session.close()
         fresh = not self._session.alive
         lines = format_lines(segments, self._tz)
-        base = meeting.draft
+        base = normalize_draft(meeting.draft)
         if lines:
-            text = self._ask(build_message(lines, base, fresh=fresh), base)
+            text = self._ask(build_message(lines, base, fresh=fresh, title=meeting.title), base)
             draft = apply_ops(base, parse_ops(text))
         else:
             draft = base  # 無音だけの切れ端. Haikuに渡すものがない

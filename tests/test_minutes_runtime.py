@@ -261,14 +261,15 @@ def test_編集係は未反映の発言を渡して下書きを更新する(db_p
         db.add_segment(conn, meeting_id, SEG, 1000)
         db.finish_segment(conn, meeting_id, SEG, "次回は10月9日に中間発表")
     hub = MinutesHub()
-    fake = FakeSession("@@ 次回\n- 10月9日 中間発表")
+    fake = FakeSession("@@ 次に向けて\n- 10月9日 中間発表")
     editor = LiveEditor(meeting_id, hub=hub, open_db=lambda: session(db_path), tz=TZ, session=fake)
 
     editor.run_turn()
 
-    assert "これまでの議事録" in fake.messages[0]  # 最初の1回は今の議事録も渡す
+    assert "これまでの記録" in fake.messages[0]  # 最初の1回は今の記録も渡す
+    assert "会議の名前: ゼミ" in fake.messages[0]
     assert "[18:30:00] 次回は10月9日に中間発表" in fake.messages[0]
-    assert meeting(db_path, meeting_id).draft == {"次回": "- 10月9日 中間発表"}
+    assert meeting(db_path, meeting_id).draft == {"次に向けて": "- 10月9日 中間発表"}
     with session(db_path) as conn:
         assert db.undrafted_segments(conn, meeting_id) == []
 

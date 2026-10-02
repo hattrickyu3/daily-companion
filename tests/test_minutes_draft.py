@@ -17,6 +17,7 @@ from companion.services.minutes_draft import (
     apply_ops,
     editing_section,
     parse_ops,
+    normalize_draft,
     render_markdown,
 )
 from companion.services.minutes_editor import build_message, format_lines
@@ -25,13 +26,13 @@ TZ = ZoneInfo("Asia/Tokyo")
 
 
 def test_置き換えと書き足しを読み取る() -> None:
-    text = "@@ 決まったこと\n- 中間発表は10月9日\n@@+ 話し合ったこと\n- 実験結果の報告\n"
+    text = "@@ 決まったこと\n- 中間発表は10月9日\n@@+ 話したこと\n- 実験結果の報告\n"
 
     ops = parse_ops(text)
 
     assert [(o.section, o.mode, o.text) for o in ops] == [
         ("決まったこと", REPLACE, "- 中間発表は10月9日"),
-        ("話し合ったこと", APPEND, "- 実験結果の報告"),
+        ("話したこと", APPEND, "- 実験結果の報告"),
     ]
 
 
@@ -42,15 +43,28 @@ def test_変更なしと知らない見出しと前置きは捨てる() -> None:
 
 
 def test_なしだけの中身は空として扱う() -> None:
-    ops = parse_ops("@@ 決まったこと\n- （なし）\n@@ 保留・質問\n- 変更なし")
+    ops = parse_ops("@@ 決まったこと\n- （なし）\n@@ 保留・疑問\n- 変更なし")
 
     assert [o.text for o in ops] == ["", ""]
 
 
 def test_飾りの付いた見出しも既知の見出しに寄せる() -> None:
-    ops = parse_ops("@@ 宿題（誰が・何を・いつまでに）\n- 田中: 資料作成（未定）")
+    ops = parse_ops("@@ やること（誰が・何を・いつまでに）\n- 田中: 資料作成（未定）")
 
-    assert ops[0].section == "宿題"
+    assert ops[0].section == "やること"
+
+
+def test_前の見出しの名前で返されても今の見出しに読み替える() -> None:
+    ops = parse_ops("@@ 宿題\n- 田中: 資料作成\n@@+ 話し合ったこと\n- 報告\n@@ 次回\n- 10月9日\n@@ 保留・質問\n- F値")
+
+    assert [o.section for o in ops] == ["やること", "話したこと", "次に向けて", "保留・疑問"]
+
+
+def test_前の見出しの名前で保存された下書きも読める() -> None:
+    old = {"要点": "- a", "話し合ったこと": "- b", "宿題": "- c", "次回": "- d", "保留・質問": "- e"}
+
+    assert normalize_draft(old) == {"要点": "- a", "話したこと": "- b", "やること": "- c", "次に向けて": "- d", "保留・疑問": "- e"}
+    assert render_markdown(old).startswith("## 要点\n\n- a\n\n## 話したこと\n\n- b")
 
 
 def test_届いている途中の書きかけの見出しは中身として扱わない() -> None:
@@ -61,13 +75,13 @@ def test_届いている途中の書きかけの見出しは中身として扱�
 
 
 def test_編集を当てても元の下書きは変わらない() -> None:
-    draft = {"話し合ったこと": "- 前半の話", "要点": "- 古い要点"}
-    ops = parse_ops("@@+ 話し合ったこと\n- 後半の話\n@@ 要点\n- 新しい要点")
+    draft = {"話したこと": "- 前半の話", "要点": "- 古い要点"}
+    ops = parse_ops("@@+ 話したこと\n- 後半の話\n@@ 要点\n- 新しい要点")
 
     updated = apply_ops(draft, ops)
 
-    assert updated == {"話し合ったこと": "- 前半の話\n- 後半の話", "要点": "- 新しい要点"}
-    assert draft == {"話し合ったこと": "- 前半の話", "要点": "- 古い要点"}
+    assert updated == {"話したこと": "- 前半の話\n- 後半の話", "要点": "- 新しい要点"}
+    assert draft == {"話したこと": "- 前半の話", "要点": "- 古い要点"}
 
 
 def test_空の書き足しでは何も変えない() -> None:
@@ -75,7 +89,7 @@ def test_空の書き足しでは何も変えない() -> None:
 
 
 def test_下書きをMarkdownにすると決まった順で並ぶ() -> None:
-    text = render_markdown({"決まったこと": "- x", "要点": "- y", "宿題": ""})
+    text = render_markdown({"決まったこと": "- x", "要点": "- y", "やること": ""})
 
     assert text == "## 要点\n\n- y\n\n## 決まったこと\n\n- x"
 
@@ -90,12 +104,23 @@ def test_Haikuに渡す発言には時刻が付き無音は飛ばす() -> None:
     assert format_lines(segments, TZ) == "[18:30:05] 始めます"
 
 
-def test_起動し直した直後は今の議事録も渡す() -> None:
-    fresh = build_message("[18:30:05] 続き", {"要点": "- 前半"}, fresh=True)
-    ongoing = build_message("[18:30:05] 続き", {"要点": "- 前半"}, fresh=False)
+def test_起動し直した直後は会議の名前と今の記録も渡す() -> None:
+    fresh = build_message("[18:30:05] 続き", {"要点": "- 前半"}, fresh=True, title="父との会話")
+    ongoing = build_message("[18:30:05] 続き", {"要点": "- 前半"}, fresh=False, title="父との会話")
 
+    assert "会議の名前: 父との会話" in fresh
     assert "@@ 要点\n- 前半" in fresh
-    assert "これまでの議事録" not in ongoing
+    assert "これまでの記録" not in ongoing
+
+
+def test_AIへの指示はゼミを前提にしない() -> None:
+    from companion.services.minutes_editor import SYSTEM_PROMPT
+    from companion.services.minutes_final import POLISH_SYSTEM_PROMPT
+
+    for prompt in (SYSTEM_PROMPT, POLISH_SYSTEM_PROMPT):
+        assert "ゼミの議事録" not in prompt
+        assert "宿題" not in prompt
+        assert "会議の名前" in prompt
 
 
 def _line(event: dict) -> bytes:
