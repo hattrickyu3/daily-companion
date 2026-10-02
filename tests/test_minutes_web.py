@@ -193,3 +193,30 @@ def test_ファイルだけ残っている会議も消せない(env) -> None:
 
     assert client.post("/minutes/1/delete").status_code == 409
     assert runtime.audio.segment_path(1, SEG).exists()
+
+
+def test_再起動の直後に会議の画面をいきなり開いても足りない列をそろえる(tmp_path, monkeypatch) -> None:
+    from datetime import datetime
+
+    from companion.web import app as web_app
+    from companion.web import minutes_routes
+
+    # 「手で直したか」の列がまだ無い、前の版のデータベース
+    db_path = tmp_path / "old.db"
+    with session(db_path) as conn:
+        apply_schema(conn)
+        db.create_meeting(conn, "ゼミ", datetime(2026, 10, 2, 18, 30))
+        conn.execute("ALTER TABLE meetings DROP COLUMN hand_edited")
+
+    def build_runtime():
+        with session(db_path) as conn:
+            apply_schema(conn)  # 本物の _build_runtime と同じく、作るときにテーブルをそろえる
+        return make_runtime(db_path, tmp_path, FakeTranscriber([]))
+
+    monkeypatch.setattr(minutes_routes, "session", lambda: session(db_path))
+    monkeypatch.setattr(minutes_routes, "_runtime", None)
+    monkeypatch.setattr(minutes_routes, "_build_runtime", build_runtime)
+
+    with TestClient(web_app.app) as client:
+        assert client.get("/minutes/1").status_code == 200
+        assert client.get("/minutes/1/edit", follow_redirects=False).status_code == 303

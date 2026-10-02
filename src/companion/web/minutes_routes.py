@@ -85,6 +85,9 @@ def _build_runtime() -> MinutesRuntime:
 
 
 def _load_meeting(meeting_id: int) -> db.Meeting:
+    # 後から足した列があるので、読む前に必ずテーブルをそろえる（議事録係を作るときにそろう）.
+    # 再起動の直後に一覧を通さず会議の画面を開くと、列が無くて落ちていた。
+    get_runtime()
     with session() as conn:
         meeting = db.get_meeting(conn, meeting_id)
     if meeting is None:
