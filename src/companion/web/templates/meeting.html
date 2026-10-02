@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}{{ meeting.title }} — 議事録{% endblock %}
+
+{% block head %}
+<style>
+  /* .notice や .btn の display 指定に hidden 属性が負けないように */
+  #minutes-app [hidden] { display: none !important; }
+  #minutes-app .card-head { flex-wrap: wrap; }
+  #minutes-app .card-head h2 { white-space: nowrap; }
+  .participants { margin-top: 6px; font-size: 15px; }
+  .participants summary { cursor: pointer; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+  .participants .form-foot { margin-top: 8px; justify-content: flex-start; }
+  .recorder { position: sticky; top: 60px; z-index: 5; }
+  .rec-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .rec-row .btn { min-height: 48px; font-size: 17px; padding: 10px 18px; }
+  .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .btn-danger:hover { background: #B8184A; border-color: #B8184A; color: #fff; }
+  .rec-timer { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .rec-level { flex: 1; min-width: 80px; height: 8px; background: var(--group); border-radius: 4px; overflow: hidden; }
+  .rec-level > span { display: block; height: 100%; width: 0; background: var(--main); }
+  .rec-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-top: 10px; font-size: 14px; font-weight: 600; }
+  .section + .section { margin-top: 12px; }
+  .section h3 { font-size: 16px; margin: 0 0 4px; }
+  .section { padding: 6px 10px; border-left: 4px solid transparent; border-radius: 4px; }
+  .section.editing { border-left-color: var(--main); background: var(--main-soft); }
+  .section.blank .section-body { font-size: 14px; }
+  .transcript { max-height: 55vh; overflow-y: auto; font-size: 15px; }
+  .line { display: flex; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--group); }
+  .line time { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .line[data-status="failed"] span { color: var(--danger); }
+  .final h2 { margin-top: 20px; }
+  .final h2:first-child { margin-top: 0; }
+  .final h3 { font-size: 16px; margin: 14px 0 6px; }
+  .final ul { margin: 0; padding-left: 1.3em; }
+  .final table { margin-top: 6px; }
+  .final td, .final th { border: 1px solid var(--line); }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set recording = meeting.status == "recording" %}
+{% set finished = meeting.status in ("done", "failed") %}
+<div id="minutes-app" data-meeting-id="{{ meeting.id }}" data-status="{{ meeting.status }}">
+  <div class="page-head">
+    <div>
+      <h1>{{ meeting.title }}</h1>
+      <p class="page-sub">{{ meeting.started_at.strftime("%Y年%m月%d日 %H:%M") }}{% if meeting.ended_at %}〜{{ meeting.ended_at.strftime("%H:%M") }}{% endif %}</p>
+      <details class="participants">
+        <summary><i data-lucide="users"></i>参加者：{{ meeting.participants or "未入力" }}</summary>
+        <form method="post" action="/minutes/{{ meeting.id }}/participants" class="form-foot">
+          <input type="text" name="participants" value="{{ meeting.participants }}" maxlength="200" placeholder="例: 自分、田中、佐藤、先生" style="flex:1; min-width:180px">
+          <button class="btn" type="submit"><i data-lucide="check"></i>保存</button>
+        </form>
+        <p class="hint" style="margin-top:6px">直したあとに「清書をやり直す」を押すと、名前の付け直しに使います。</p>
+      </details>
+    </div>
+    <div class="actions">
+      <a class="btn" href="/minutes"><i data-lucide="list"></i>議事録の一覧</a>
+    </div>
+  </div>
+
+  <div class="notice error" id="mic-notice" hidden><i data-lucide="mic-off"></i><p></p></div>
+  <div class="notice warn" id="upload-notice" hidden><i data-lucide="wifi-off"></i><p></p></div>
+  <div class="notice warn" id="ai-notice" {% if not meeting.error %}hidden{% endif %}><i data-lucide="triangle-alert"></i><p>{{ meeting.error or "" }}</p></div>
+  <div class="notice" id="finishing-notice" {% if meeting.status != "finishing" %}hidden{% endif %}><i data-lucide="loader"></i><p>清書しています（録音全体を文字起こしし直してから、Sonnet 5.5 がまとめます。数分かかります）。</p></div>
+
+  {% if recording %}
+  <section class="card recorder" id="recorder">
+    <div class="rec-row">
+      <button type="button" class="btn btn-primary" id="rec-start"><i data-lucide="mic"></i>録音を始める</button>
+      <button type="button" class="btn btn-danger" id="rec-stop" hidden><i data-lucide="square"></i>止めて清書する</button>
+      <button type="button" class="btn" id="rec-resume" hidden><i data-lucide="rotate-ccw"></i>録音を再開</button>
+      <span class="rec-timer" id="rec-timer">00:00</span>
+      <span class="rec-level"><span id="rec-level"></span></span>
+    </div>
+    <div class="rec-foot">
+      <span id="upload-state">すべてPCに保存済み</span>
+      <span>録音中は画面をつけたまま、Safariを前に出しておいてください</span>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if finished %}
+  <section class="card">
+    <div class="card-head">
+      <h2><i data-lucide="file-text"></i>議事録</h2>
+      <div class="actions">
+        {% if note_link %}<a class="btn" href="{{ note_link }}"><i data-lucide="library"></i>ノートで開く</a>{% endif %}
+        <a class="btn" href="/minutes/{{ meeting.id }}/audio"><i data-lucide="download"></i>録音</a>
+        <form method="post" action="/minutes/{{ meeting.id }}/retry" onsubmit="return confirm('清書をやり直しますか？（数分かかります）')">
+          <button class="btn" type="submit"><i data-lucide="refresh-cw"></i>清書をやり直す</button>
+        </form>
+      </div>
+    </div>
+    <div class="final">{{ final_html|safe }}</div>
+  </section>
+  {% endif %}
+
+  <div class="cols" style="margin-top:14px">
+    <section class="card">
+      <div class="card-head">
+        <h2><i data-lucide="notebook-pen"></i>{% if finished %}録音中の下書き{% else %}議事録（AIが書き進めています）{% endif %}</h2>
+        <span class="tag on" id="editing-badge" hidden>AIが編集中</span>
+      </div>
+      {% for name, label in sections %}
+      <div class="section blank" data-section="{{ name }}">
+        <h3>{{ label }}</h3>
+        <div class="raw section-body">（まだなし）</div>
+      </div>
+      {% endfor %}
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2><i data-lucide="captions"></i>文字起こし</h2>
+        {% if finished %}
+        <form method="post" action="/minutes/{{ meeting.id }}/retry-transcription">
+          <button class="btn" type="submit" title="失敗した部分だけ、もう一度文字起こしする"><i data-lucide="refresh-cw"></i>失敗分をやり直す</button>
+        </form>
+        {% endif %}
+      </div>
+      <p class="empty" id="transcript-empty">まだありません。</p>
+      <div class="transcript" id="transcript"></div>
+    </section>
+  </div>
+</div>
+
+<script src="/static/minutes/recorder.js"></script>
+<script src="/static/minutes/live.js"></script>
+{% endblock %}

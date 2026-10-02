@@ -20,6 +20,15 @@ LOG_DIR = PROJECT_ROOT / "logs"
 CREDENTIALS_DIR = PROJECT_ROOT / "credentials"
 DB_PATH = DATA_DIR / "companion.db"
 BACKUP_DIR = DATA_DIR / "backups"
+# 議事録の録音。音声は議事録づくりがどこで失敗しても残したいので、DBとは別にファイルで持つ。
+MINUTES_AUDIO_DIR = DATA_DIR / "minutes"
+# 話者分離のモデル. 初めて使うときに sherpa-onnx の GitHub の配布物から落とす.
+DIARIZATION_MODELS_DIR = DATA_DIR / "models" / "diarization"
+# 議事録ノートの置き場所（NOTES_DIR からの相対）。MINUTES_DIR が空のときに使う。
+DEFAULT_MINUTES_SUBDIR = Path("研究") / "ゼミ議事録"
+DEFAULT_WHISPER_MODEL = "large-v3-turbo"
+# 録音を終えたあと、録音全体を文字にし直すモデル. 遅いぶん正確.
+DEFAULT_WHISPER_FINAL_MODEL = "large-v3"
 
 DEFAULT_SERVICE_ACCOUNT_FILE = CREDENTIALS_DIR / "service-account.json"
 # 読み書き両対応のスコープ。将来の予定登録で共有設定をやり直さずに済むよう最初から取る。
@@ -66,6 +75,11 @@ class Config:
     # mail-notifier が書き出すメールの判定結果（JSON）。
     # 空ならメール画面は「未設定」と案内するだけで、今日の画面にもメール欄を出さない。
     mail_results_file: Path | None = None
+    # 清書した議事録ノートを書き出すフォルダ。None なら書き出さず、アプリの中にだけ残す。
+    minutes_dir: Path | None = None
+    whisper_model: str = DEFAULT_WHISPER_MODEL
+    whisper_final_model: str = DEFAULT_WHISPER_FINAL_MODEL
+    minutes_audio_dir: Path = field(default=MINUTES_AUDIO_DIR)
 
     @property
     def has_calendar(self) -> bool:
@@ -107,6 +121,13 @@ def _validate_news_topics(topics: tuple[str, ...]) -> tuple[str, ...]:
     return topics or ("ai_tech",)
 
 
+def _resolve_minutes_dir(raw: str, notes_dir: Path | None) -> Path | None:
+    """議事録ノートの置き場所. 未指定なら保管庫の中の既定の場所にする."""
+    if raw:
+        return Path(raw)
+    return notes_dir / DEFAULT_MINUTES_SUBDIR if notes_dir else None
+
+
 def load_config() -> Config:
     """.env を読み込んで Config を組み立てる."""
     load_dotenv(PROJECT_ROOT / ".env")
@@ -120,6 +141,7 @@ def load_config() -> Config:
     key_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
     notes_dir = os.getenv("NOTES_DIR", "").strip()
     mail_results_file = os.getenv("MAIL_RESULTS_FILE", "").strip()
+    notes_path = Path(notes_dir) if notes_dir else None
 
     return Config(
         ntfy_topic=os.getenv("NTFY_TOPIC", "").strip(),
@@ -133,8 +155,11 @@ def load_config() -> Config:
         news_topics=_validate_news_topics(_split_csv(os.getenv("NEWS_TOPICS"))),
         claude_timeout_sec=_read_int("CLAUDE_TIMEOUT_SEC", DEFAULT_CLAUDE_TIMEOUT_SEC),
         timezone=timezone,
-        notes_dir=Path(notes_dir) if notes_dir else None,
+        notes_dir=notes_path,
         mail_results_file=Path(mail_results_file) if mail_results_file else None,
+        minutes_dir=_resolve_minutes_dir(os.getenv("MINUTES_DIR", "").strip(), notes_path),
+        whisper_model=os.getenv("WHISPER_MODEL", "").strip() or DEFAULT_WHISPER_MODEL,
+        whisper_final_model=os.getenv("WHISPER_FINAL_MODEL", "").strip() or DEFAULT_WHISPER_FINAL_MODEL,
     )
 
 

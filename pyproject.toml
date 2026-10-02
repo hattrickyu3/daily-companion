@@ -6,14 +6,20 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.118.0",
+    "faster-whisper>=1.2.1",
     "google-api-python-client>=2.198.0",
     "google-auth>=2.56.3",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
     "markdown-it-py>=4.2.0",
     "mdit-py-plugins>=0.6.1",
+    "numpy>=2.5.3",
+    "nvidia-cublas-cu12>=12.9.2.10",
+    "nvidia-cudnn-cu12>=9,<10",
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.32",
+    "sherpa-onnx>=1.13.8",
+    "sherpa-onnx-core==1.13.8",
     "tzdata>=2026.3",
     "uvicorn>=0.38.0",
 ]

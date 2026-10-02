@@ -108,3 +108,34 @@ CREATE TRIGGER IF NOT EXISTS entries_fts_update AFTER UPDATE ON entries BEGIN
     VALUES ('delete', old.id, old.raw_text, old.summary);
     INSERT INTO entries_fts (rowid, raw_text, summary) VALUES (new.id, new.raw_text, new.summary);
 END;
+
+-- 議事録。音声そのものは data/minutes/<id>/ にファイルで置き、ここには文字と状態だけを持つ。
+-- status: recording（録音中）→ finishing（清書中）→ done / failed
+CREATE TABLE IF NOT EXISTS meetings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT NOT NULL,
+    participants TEXT NOT NULL DEFAULT '',  -- 参加者の名前（「自分、田中、佐藤」）. 話者の聞き分けの人数にも使う
+    started_at  TEXT NOT NULL,              -- ISO 8601（ローカル時刻・タイムゾーン付き）
+    ended_at    TEXT,
+    status      TEXT NOT NULL DEFAULT 'recording',
+    draft       TEXT NOT NULL DEFAULT '{}', -- 録音中にHaikuが書いている議事録（見出し→本文のJSON）
+    final_text  TEXT,                       -- 終了後にAIが清書した議事録（Markdown）
+    polished    INTEGER NOT NULL DEFAULT 0, -- final_text がAIの清書か（0なら清書に失敗して下書きを入れた）
+    note_path   TEXT,                       -- 書き出したノートの場所
+    error       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 音声の切れ端1つ = 1行。seg_id はiPhone側で録り始めた時刻（エポックミリ秒）で、送り直しても同じ値になる。
+-- status: pending（文字起こし待ち）/ done / failed
+CREATE TABLE IF NOT EXISTS meeting_segments (
+    meeting_id  INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    seg_id      INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    text        TEXT NOT NULL DEFAULT '',
+    error       TEXT,
+    drafted     INTEGER NOT NULL DEFAULT 0, -- Haikuの議事録に反映済みか
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (meeting_id, seg_id)
+);

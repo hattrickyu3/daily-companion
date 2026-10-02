@@ -59,6 +59,8 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
 ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # (テーブル, 列名, 型) — 複数日の予定に対応するため 2026-08-11 に追加
     ("calendar_events", "end_date", "TEXT"),
+    # 議事録の参加者の名前 — 話者の聞き分けのため 2026-10-02 に追加
+    ("meetings", "participants", "TEXT NOT NULL DEFAULT ''"),
 )
 
 

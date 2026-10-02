@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}議事録 — daily-companion{% endblock %}
+
+{% block content %}
+{% set labels = {"recording": "録音中", "finishing": "清書中", "done": "完成", "failed": "要確認"} %}
+<div class="page-head">
+  <div>
+    <h1>議事録</h1>
+    {% if meetings %}<p class="page-sub">{{ meetings|length }}件</p>{% endif %}
+  </div>
+</div>
+
+<section class="card">
+  <form method="post" action="/minutes">
+    <div class="fields">
+      <div>
+        <label for="title">会議の名前</label>
+        <input type="text" id="title" name="title" value="{{ default_title }}" maxlength="60">
+      </div>
+      <div>
+        <label for="participants">参加者（任意）</label>
+        <input type="text" id="participants" name="participants" maxlength="200" placeholder="例: 自分、田中、佐藤、先生">
+      </div>
+    </div>
+    <div class="form-foot">
+      <p class="hint">参加者を入れると、その人数で声を聞き分け、清書のときに話した人の名前を付けます。</p>
+      <button class="btn btn-primary" type="submit"><i data-lucide="mic"></i>新しく録音する</button>
+    </div>
+  </form>
+  <p class="hint" style="margin-top:10px">
+    iPhoneでは Tailscale の https のアドレス（https://〜.ts.net/minutes）で開いてください。http のままだとマイクが使えません。
+    {% if minutes_dir %}清書した議事録は「{{ minutes_dir }}」に保存します。{% else %}NOTES_DIR が未設定なので、議事録はこのアプリの中にだけ残ります。{% endif %}
+  </p>
+</section>
+
+{% if meetings %}
+<div class="table-wrap" style="margin-top:14px">
+  <table>
+    <thead><tr><th>日時</th><th>名前</th><th>録音</th><th>状態</th></tr></thead>
+    <tbody>
+      {% for m in meetings %}
+      <tr>
+        <td class="date">{{ m.started_at.strftime("%Y/%m/%d %H:%M") }}</td>
+        <td><a class="row-link" href="/minutes/{{ m.id }}">{{ m.title }}</a></td>
+        <td class="num nowrap">{{ m.total_ms // 60000 }}分</td>
+        <td><span class="tag{% if m.status == 'done' %} ok{% elif m.status == 'failed' %} ng{% endif %}">{{ labels.get(m.status, m.status) }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,253 @@
+"""議事録の画面.
+
+iPhoneのSafariで /minutes/{id} を開いて録音する。音声は数秒ごとの切れ端で届き、
+文字起こしとHaikuの編集の様子は Server-Sent Events（/events）で画面に流す。
+
+マイクはHTTPSのページでしか使えないので、iPhoneからは Tailscale の
+https://<PC名>.<tailnet>.ts.net/minutes で開く（tailscale serve で8765番へ流している）。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+import threading
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
+from markdown_it import MarkdownIt
+
+from companion.clock import now_local
+from companion.config import DIARIZATION_MODELS_DIR, get_config
+from companion.db import meetings as db
+from companion.db.connection import apply_schema, session
+from companion.integrations.diarization import Diarizer
+from companion.integrations.whisper import Transcriber
+from companion.services.minutes_audio import AudioError, AudioStore
+from companion.services.minutes_draft import SECTIONS, section_label
+from companion.services.minutes_runtime import M4A_NAME, MinutesRuntime
+from companion.services.minutes_speakers import parse_participants
+
+log = logging.getLogger(__name__)
+
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# 生のHTMLは通さない（AIの書いた文章がそのままスクリプトとして動かないように）.
+markdown = MarkdownIt("commonmark", {"html": False}).enable("table")
+
+DEFAULT_TITLE = "ゼミ"
+MAX_TITLE_LENGTH = 60
+MAX_PARTICIPANTS_LENGTH = 200
+KEEPALIVE_SEC = 15
+# seg_id はiPhone側の時刻（エポックミリ秒）. 2001年〜2286年の範囲だけ受ける.
+SEG_ID_MIN, SEG_ID_MAX = 10**12, 10**13
+
+# 改行などの制御文字. 題名はファイル名とダウンロード名に使うので落とす.
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+router = APIRouter(prefix="/minutes")
+_runtime: MinutesRuntime | None = None
+_runtime_lock = threading.Lock()
+
+
+def get_runtime() -> MinutesRuntime:
+    """アプリ全体で1つの議事録係. 最初に使うときに作って動かす."""
+    global _runtime
+    with _runtime_lock:
+        if _runtime is None:
+            _runtime = _build_runtime()
+    return _runtime
+
+
+def _build_runtime() -> MinutesRuntime:
+    config = get_config()
+    # 議事録のテーブルや列を後から足しているので、使い始める前に必ずそろえる（何度実行しても安全）.
+    with session() as conn:
+        apply_schema(conn)
+    runtime = MinutesRuntime(
+        open_db=session,
+        audio=AudioStore(config.minutes_audio_dir),
+        transcriber=Transcriber(config.whisper_model),
+        final_transcriber=Transcriber(config.whisper_final_model),
+        diarizer=Diarizer(DIARIZATION_MODELS_DIR),
+        tz=config.timezone,
+        minutes_dir=config.minutes_dir,
+    )
+    runtime.start()
+    return runtime
+
+
+def _load_meeting(meeting_id: int) -> db.Meeting:
+    with session() as conn:
+        meeting = db.get_meeting(conn, meeting_id)
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="会議が見つかりません。")
+    return meeting
+
+
+def _note_link(note_path: str | None) -> str | None:
+    """書き出したノートを、ノート画面で開くURL. 保管庫の外なら None."""
+    notes_dir = get_config().notes_dir
+    if not note_path or notes_dir is None:
+        return None
+    try:
+        rel = Path(note_path).relative_to(notes_dir)
+    except ValueError:
+        return None
+    return "/notes/view/" + rel.as_posix()
+
+
+def snapshot(runtime: MinutesRuntime, meeting_id: int) -> dict[str, Any]:
+    """画面の全体. つないだ直後とつなぎ直したときに送る."""
+    with session() as conn:
+        meeting = db.get_meeting(conn, meeting_id)
+        segments = db.list_segments(conn, meeting_id)
+    if meeting is None:
+        return {"type": "snapshot", "missing": True}
+    return {
+        "type": "snapshot",
+        "status": meeting.status,
+        "error": meeting.error,
+        "draft": meeting.draft,
+        "segments": [runtime.segment_event(s) for s in segments],
+    }
+
+
+def _clean_participants(raw: str) -> str:
+    """参加者の入力を「田中、佐藤」の形にそろえる."""
+    return "、".join(parse_participants(CONTROL_CHARS.sub(" ", raw)[:MAX_PARTICIPANTS_LENGTH]))
+
+
+@router.get("", response_class=HTMLResponse)
+def minutes_page(request: Request) -> HTMLResponse:
+    get_runtime()  # テーブルをそろえるため、一覧を読む前に動かす
+    with session() as conn:
+        meetings = db.list_meetings(conn)
+    return templates.TemplateResponse(
+        request, "minutes.html",
+        {"meetings": meetings, "default_title": DEFAULT_TITLE, "minutes_dir": get_config().minutes_dir},
+    )
+
+
+@router.post("")
+def create_meeting(title: str = Form(DEFAULT_TITLE), participants: str = Form("")) -> RedirectResponse:
+    get_runtime()
+    cleaned = CONTROL_CHARS.sub("", title).strip()[:MAX_TITLE_LENGTH] or DEFAULT_TITLE
+    with session() as conn:
+        meeting_id = db.create_meeting(
+            conn, cleaned, now_local(), participants=_clean_participants(participants)
+        )
+    return RedirectResponse(f"/minutes/{meeting_id}", status_code=303)
+
+
+@router.get("/{meeting_id}", response_class=HTMLResponse)
+def meeting_page(request: Request, meeting_id: int) -> HTMLResponse:
+    meeting = _load_meeting(meeting_id)
+    get_runtime()  # 前回の残りの文字起こしを拾い直すため、画面を開いた時点で動かしておく
+    return templates.TemplateResponse(
+        request, "meeting.html",
+        {
+            "meeting": meeting,
+            "sections": [(s, section_label(s)) for s in SECTIONS],
+            "final_html": markdown.render(meeting.final_text) if meeting.final_text else "",
+            "note_link": _note_link(meeting.note_path),
+        },
+    )
+
+
+@router.post("/{meeting_id}/segments")
+async def upload_segment(request: Request, meeting_id: int, seg: int) -> JSONResponse:
+    """音声の切れ端を受け取る. 保存できたら 200 を返し、iPhone側はそこで手元の控えを消す."""
+    if not SEG_ID_MIN <= seg < SEG_ID_MAX:
+        return JSONResponse({"ok": False, "error": "切れ端の番号が不正です。"}, status_code=400)
+    await run_in_threadpool(_load_meeting, meeting_id)
+    data = await request.body()
+    try:
+        await run_in_threadpool(get_runtime().receive_segment, meeting_id, seg, data)
+    except AudioError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+@router.get("/{meeting_id}/events")
+async def meeting_events(request: Request, meeting_id: int) -> StreamingResponse:
+    await run_in_threadpool(_load_meeting, meeting_id)
+    runtime = await run_in_threadpool(get_runtime)
+
+    async def stream():
+        queue = runtime.hub.subscribe(meeting_id)
+        try:
+            # 先に購読してから全体を送る. 逆だと、その間に起きた変化を取りこぼす.
+            first = await run_in_threadpool(snapshot, runtime, meeting_id)
+            yield _sse(first)
+            while not await request.is_disconnected():
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=KEEPALIVE_SEC)
+                except TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield _sse(event)
+        finally:
+            runtime.hub.unsubscribe(meeting_id, queue)
+
+    return StreamingResponse(
+        stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _sse(event: dict[str, Any]) -> str:
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+@router.post("/{meeting_id}/finish")
+def finish_meeting(meeting_id: int) -> JSONResponse:
+    meeting = _load_meeting(meeting_id)
+    if meeting.status != db.RECORDING:
+        return JSONResponse({"ok": True, "status": meeting.status})
+    get_runtime().finish(meeting_id)
+    return JSONResponse({"ok": True, "status": db.FINISHING})
+
+
+@router.post("/{meeting_id}/participants")
+def update_participants(meeting_id: int, participants: str = Form("")) -> RedirectResponse:
+    """参加者を直す. 次の清書（やり直し）から使う."""
+    _load_meeting(meeting_id)
+    with session() as conn:
+        db.set_participants(conn, meeting_id, _clean_participants(participants))
+    return RedirectResponse(f"/minutes/{meeting_id}", status_code=303)
+
+
+@router.post("/{meeting_id}/retry")
+def retry_polish(meeting_id: int) -> RedirectResponse:
+    """清書をやり直す. あとから届いた切れ端もここで議事録に入る."""
+    meeting = _load_meeting(meeting_id)
+    if meeting.status in (db.DONE, db.FAILED):
+        get_runtime().finish(meeting_id)
+    return RedirectResponse(f"/minutes/{meeting_id}", status_code=303)
+
+
+@router.post("/{meeting_id}/retry-transcription")
+def retry_transcription(meeting_id: int) -> RedirectResponse:
+    _load_meeting(meeting_id)
+    get_runtime().retry_transcription(meeting_id)
+    return RedirectResponse(f"/minutes/{meeting_id}", status_code=303)
+
+
+@router.get("/{meeting_id}/audio")
+def meeting_audio(meeting_id: int) -> FileResponse:
+    """録音のダウンロード. m4aがまだ無ければ、その場で切れ端をつないだWAVを渡す."""
+    meeting = _load_meeting(meeting_id)
+    store = get_runtime().audio
+    m4a = store.meeting_dir(meeting_id) / M4A_NAME
+    path = m4a if m4a.exists() else store.merge(meeting_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="録音がありません。")
+    filename = f"{meeting.started_at:%Y-%m-%d} {meeting.title}{path.suffix}"
+    return FileResponse(path, filename=filename)

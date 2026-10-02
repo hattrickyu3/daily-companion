@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from companion.clock import today_local
@@ -44,6 +45,7 @@ from companion.services.news_history import build as build_news_history
 from companion.services.schedule import get_events_for
 from companion.web.mail_routes import action_items_for as mail_actions_for
 from companion.web.mail_routes import router as mail_router
+from companion.web.minutes_routes import router as minutes_router
 from companion.web.notes_routes import router as notes_router
 
 log = logging.getLogger(__name__)
@@ -51,11 +53,14 @@ log = logging.getLogger(__name__)
 STRUCTURE_FAILURE_PRIORITY = 4
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 app = FastAPI(title="daily-companion", docs_url=None, redoc_url=None)
 app.include_router(notes_router)
 app.include_router(mail_router)
+app.include_router(minutes_router)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def _notify_structuring_failure(entry_date: date, reason: str) -> None:
