@@ -22,6 +22,15 @@
 
 {% block content %}
 {% set labels = {"recording": "録音中", "finishing": "清書中", "done": "完成", "failed": "要確認"} %}
+{# テンプレートは再起動しなくても入れ替わるが、データを渡す側は再起動するまで古いまま。
+   古い版は rows ではなく meetings を渡してくるので、その間も一覧が空にならないよう受け止める。 #}
+{% if rows is not defined %}
+  {% set ns = namespace(rows=[]) %}
+  {% for m in meetings or [] %}
+    {% set ns.rows = ns.rows + [{"meeting": m, "duration": (m.total_ms // 1000) ~ "秒", "summary": "", "deletable": false}] %}
+  {% endfor %}
+  {% set rows = ns.rows %}
+{% endif %}
 <div class="page-head">
   <div>
     <h1>議事録</h1>
