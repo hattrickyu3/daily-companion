@@ -137,8 +137,22 @@
     showNotice($("#mic-notice"), "録音が止まっています。「録音を再開」を押してください。");
   }
 
+  // ノイズ除去のオン・オフ。録り比べられるよう、選んだ方をこのiPhoneに覚えておく
+  const noiseBox = $("#noise-suppression");
+  // 既定は「使う」。わざと切ったときだけ、切ったことを覚えておく
+  noiseBox.checked = true;
+  try { noiseBox.checked = localStorage.getItem("minutes-noise-suppression") !== "off"; } catch (e) { /* 覚えられなくても動く */ }
+  noiseBox.addEventListener("change", () => {
+    try { localStorage.setItem("minutes-noise-suppression", noiseBox.checked ? "on" : "off"); } catch (e) { /* 同上 */ }
+  });
+
   async function begin() {
-    recorder = createRecorder(meetingId, { onLevel: (v) => { level.style.width = `${Math.round(v * 100)}%`; }, onInterrupted });
+    recorder = createRecorder(meetingId, {
+      onLevel: (v) => { level.style.width = `${Math.round(v * 100)}%`; },
+      onInterrupted,
+      noiseSuppression: noiseBox.checked,
+    });
+    noiseBox.disabled = true; // 録音の途中では切り替えない
     await recorder.start();
     recording = true;
     resumeBtn.hidden = true;

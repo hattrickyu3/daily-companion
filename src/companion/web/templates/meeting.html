@@ -19,6 +19,8 @@
   .rec-level { flex: 1; min-width: 80px; height: 8px; background: var(--group); border-radius: 4px; overflow: hidden; }
   .rec-level > span { display: block; height: 100%; width: 0; background: var(--main); }
   .rec-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-top: 10px; font-size: 14px; font-weight: 600; }
+  .noise-toggle { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .noise-toggle input { width: 18px; height: 18px; margin: 0; }
   .section + .section { margin-top: 12px; }
   .section h3 { font-size: 16px; margin: 0 0 4px; }
   .section { padding: 6px 10px; border-left: 4px solid transparent; border-radius: 4px; }
@@ -75,6 +77,7 @@
     </div>
     <div class="rec-foot">
       <span id="upload-state">すべてPCに保存済み</span>
+      <label class="noise-toggle"><input type="checkbox" id="noise-suppression">iPhoneのノイズ除去を使う</label>
       <span>録音中は画面をつけたまま、Safariを前に出しておいてください</span>
     </div>
   </section>

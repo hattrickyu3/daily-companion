@@ -277,7 +277,9 @@ function makeSegmenter(onSegment, onLevel) {
 }
 
 // ---- 録音そのもの ----
-function createRecorder(meetingId, { onLevel, onInterrupted }) {
+// noiseSuppression: iPhoneのノイズ除去を使うか。前もってノイズを消すと精度が落ちるという研究もあるが、
+// 2026-10-03 に実際の環境で録り比べたら、使った方が文字起こしが良かったので既定は使う。
+function createRecorder(meetingId, { onLevel, onInterrupted, noiseSuppression = true }) {
   let ctx = null;
   let stream = null;
   let node = null;
@@ -301,7 +303,7 @@ function createRecorder(meetingId, { onLevel, onInterrupted }) {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     ctx.resume().catch(() => {});
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: true, autoGainControl: true },
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression, autoGainControl: true },
     });
     await ctx.audioWorklet.addModule("/static/minutes/worklet.js");
     const source = ctx.createMediaStreamSource(stream);
