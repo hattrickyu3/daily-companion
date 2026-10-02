@@ -12,6 +12,11 @@
   .meeting-link { font-weight: 700; text-decoration: none; }
   .meeting-link:hover { text-decoration: underline; }
   table.meetings .btn { padding: 6px 10px; }
+  table.meetings .btn-icon { padding: 0; width: 36px; height: 36px; color: var(--danger); }
+  .row-ops { display: flex; gap: 6px; justify-content: flex-end; }
+  .row-ops form { margin: 0; }
+  /* スマホ幅ではボタンを縦に積み、名前と要点の欄を狭めない */
+  @media (max-width: 767px) { .row-ops { flex-direction: column; align-items: flex-end; } }
 </style>
 {% endblock %}
 
@@ -61,7 +66,16 @@
           {% if row.summary %}<small>{{ row.summary }}</small>{% endif %}
         </td>
         <td class="date">{{ m.started_at.strftime("%m/%d") }}<small>{{ m.started_at.strftime("%H:%M") }}・{{ row.duration }}</small></td>
-        <td class="ops"><a class="btn" href="/minutes/{{ m.id }}" aria-label="{{ m.title }}を開く">開く<i data-lucide="chevron-right"></i></a></td>
+        <td class="ops">
+          <div class="row-ops">
+            <a class="btn" href="/minutes/{{ m.id }}" aria-label="{{ m.title }}を開く">開く<i data-lucide="chevron-right"></i></a>
+            {% if row.deletable %}
+            <form method="post" action="/minutes/{{ m.id }}/delete" onsubmit="return confirm('録音の入っていない {{ m.started_at.strftime('%m/%d %H:%M') }} の会議を一覧から消しますか？')">
+              <button class="btn btn-icon" type="submit" aria-label="{{ m.title }}を消す" title="消す"><i data-lucide="trash-2"></i></button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
       </tr>
       {% endfor %}
     </tbody>

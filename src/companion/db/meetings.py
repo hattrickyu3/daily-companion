@@ -103,6 +103,11 @@ def create_meeting(
     return int(cursor.lastrowid)
 
 
+def delete_meeting(conn: sqlite3.Connection, meeting_id: int) -> None:
+    """会議を消す. 録音の有無は呼び出し側で確かめること（音声のある会議は消さない約束）."""
+    conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+
+
 def set_participants(conn: sqlite3.Connection, meeting_id: int, participants: str) -> None:
     conn.execute("UPDATE meetings SET participants = ? WHERE id = ?", (participants, meeting_id))
 

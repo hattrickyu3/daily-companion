@@ -158,3 +158,38 @@ def test_一覧の各行に開くボタンがある(env) -> None:
 
     assert 'href="/minutes/1" aria-label="ゼミを開く"' in page
     assert "0秒" in page
+
+
+def test_録音の無い会議は一覧から消せる(env) -> None:
+    client, db_path, runtime = env
+    client.post("/minutes", data={"title": "ゼミ"})
+    assert 'action="/minutes/1/delete"' in client.get("/minutes").text
+
+    response = client.post("/minutes/1/delete", follow_redirects=False)
+
+    assert response.status_code == 303
+    with session(db_path) as conn:
+        assert db.get_meeting(conn, 1) is None
+
+
+def test_録音のある会議は消せず音声も残る(env) -> None:
+    client, db_path, runtime = env
+    client.post("/minutes", data={"title": "ゼミ"})
+    client.post(f"/minutes/1/segments?seg={SEG}", content=make_wav())
+    assert 'action="/minutes/1/delete"' not in client.get("/minutes").text
+
+    response = client.post("/minutes/1/delete")
+
+    assert response.status_code == 409
+    with session(db_path) as conn:
+        assert db.get_meeting(conn, 1) is not None
+    assert runtime.audio.segment_path(1, SEG).exists()
+
+
+def test_ファイルだけ残っている会議も消せない(env) -> None:
+    client, db_path, runtime = env
+    client.post("/minutes", data={"title": "ゼミ"})
+    runtime.audio.save_segment(1, SEG, make_wav())  # DBに記録される前にアプリが落ちた状態
+
+    assert client.post("/minutes/1/delete").status_code == 409
+    assert runtime.audio.segment_path(1, SEG).exists()

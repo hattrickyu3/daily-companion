@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 import threading
 from pathlib import Path
 from typing import Any
@@ -149,6 +150,15 @@ def summary_line(meeting: db.Meeting) -> str:
     return ""
 
 
+def is_deletable(meeting: db.Meeting, store: AudioStore) -> bool:
+    """消してよい会議か. 録音が1つも無いものだけ（音声は必ず残す約束なので、録音のある会議は消させない）."""
+    return (
+        meeting.segment_count == 0
+        and meeting.status != db.FINISHING
+        and not store.segment_ids_on_disk(meeting.id)
+    )
+
+
 def _clean_participants(raw: str) -> str:
     """参加者の入力を「田中、佐藤」の形にそろえる."""
     return "、".join(parse_participants(CONTROL_CHARS.sub(" ", raw)[:MAX_PARTICIPANTS_LENGTH]))
@@ -156,14 +166,19 @@ def _clean_participants(raw: str) -> str:
 
 @router.get("", response_class=HTMLResponse)
 def minutes_page(request: Request) -> HTMLResponse:
-    get_runtime()  # テーブルをそろえるため、一覧を読む前に動かす
+    store = get_runtime().audio  # テーブルをそろえるため、一覧を読む前に動かす
     with session() as conn:
         meetings = db.list_meetings(conn)
     return templates.TemplateResponse(
         request, "minutes.html",
         {
             "rows": [
-                {"meeting": m, "duration": duration_label(m.total_ms), "summary": summary_line(m)}
+                {
+                    "meeting": m,
+                    "duration": duration_label(m.total_ms),
+                    "summary": summary_line(m),
+                    "deletable": is_deletable(m, store),
+                }
                 for m in meetings
             ],
             "default_title": DEFAULT_TITLE,
@@ -259,6 +274,23 @@ def update_participants(meeting_id: int, participants: str = Form("")) -> Redire
     with session() as conn:
         db.set_participants(conn, meeting_id, _clean_participants(participants))
     return RedirectResponse(f"/minutes/{meeting_id}", status_code=303)
+
+
+@router.post("/{meeting_id}/delete")
+def delete_meeting(meeting_id: int) -> RedirectResponse:
+    """録音の入っていない会議を消す. 録音があれば何もしない."""
+    store = get_runtime().audio
+    with session() as conn:
+        meeting = next((m for m in db.list_meetings(conn) if m.id == meeting_id), None)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="会議が見つかりません。")
+        if not is_deletable(meeting, store):
+            raise HTTPException(status_code=409, detail="録音のある会議は消せません。")
+        db.delete_meeting(conn, meeting_id)
+    folder = store.meeting_dir(meeting_id)
+    if folder.is_dir() and not any(folder.rglob("*.wav")):
+        shutil.rmtree(folder)
+    return RedirectResponse("/minutes", status_code=303)
 
 
 @router.post("/{meeting_id}/retry")
