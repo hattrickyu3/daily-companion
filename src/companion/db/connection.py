@@ -61,6 +61,8 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("calendar_events", "end_date", "TEXT"),
     # 議事録の参加者の名前 — 話者の聞き分けのため 2026-10-02 に追加
     ("meetings", "participants", "TEXT NOT NULL DEFAULT ''"),
+    # 議事録を手で直したか — 清書のやり直しで上書きする前に警告するため 2026-10-03 に追加
+    ("meetings", "hand_edited", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 

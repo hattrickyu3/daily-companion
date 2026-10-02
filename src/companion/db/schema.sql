@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS meetings (
     draft       TEXT NOT NULL DEFAULT '{}', -- 録音中にHaikuが書いている議事録（見出し→本文のJSON）
     final_text  TEXT,                       -- 終了後にAIが清書した議事録（Markdown）
     polished    INTEGER NOT NULL DEFAULT 0, -- final_text がAIの清書か（0なら清書に失敗して下書きを入れた）
+    hand_edited INTEGER NOT NULL DEFAULT 0, -- 清書のあとに手で直したか（清書をやり直すと消えるので警告に使う）
     note_path   TEXT,                       -- 書き出したノートの場所
     error       TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))

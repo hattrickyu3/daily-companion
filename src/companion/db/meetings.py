@@ -33,6 +33,7 @@ class Meeting:
     draft: dict[str, str] = field(default_factory=dict)
     final_text: str | None = None
     polished: bool = False
+    hand_edited: bool = False
     note_path: str | None = None
     error: str | None = None
     # 一覧用の集計. 単体で取ったときは 0 のまま.
@@ -73,6 +74,7 @@ def _to_meeting(row: sqlite3.Row) -> Meeting:
         draft=_parse_draft(row["draft"]),
         final_text=row["final_text"],
         polished=bool(row["polished"]),
+        hand_edited=bool(row["hand_edited"]),
         note_path=row["note_path"],
         error=row["error"],
         segment_count=row["segment_count"] if "segment_count" in keys else 0,
@@ -155,8 +157,15 @@ def save_final(
     conn: sqlite3.Connection, meeting_id: int, text: str, note_path: str | None, *, polished: bool
 ) -> None:
     conn.execute(
-        "UPDATE meetings SET final_text = ?, note_path = ?, polished = ? WHERE id = ?",
+        "UPDATE meetings SET final_text = ?, note_path = ?, polished = ?, hand_edited = 0 WHERE id = ?",
         (text, note_path, int(polished), meeting_id),
+    )
+
+
+def save_hand_edit(conn: sqlite3.Connection, meeting_id: int, text: str) -> None:
+    """手で直した議事録を保存する."""
+    conn.execute(
+        "UPDATE meetings SET final_text = ?, hand_edited = 1 WHERE id = ?", (text, meeting_id)
     )
 
 

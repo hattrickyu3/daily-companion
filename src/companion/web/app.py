@@ -45,6 +45,7 @@ from companion.services.news_history import build as build_news_history
 from companion.services.schedule import get_events_for
 from companion.web.mail_routes import action_items_for as mail_actions_for
 from companion.web.mail_routes import router as mail_router
+from companion.web.minutes_edit_routes import router as minutes_edit_router
 from companion.web.minutes_routes import router as minutes_router
 from companion.web.notes_routes import router as notes_router
 
@@ -60,6 +61,7 @@ app = FastAPI(title="daily-companion", docs_url=None, redoc_url=None)
 app.include_router(notes_router)
 app.include_router(mail_router)
 app.include_router(minutes_router)
+app.include_router(minutes_edit_router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ meeting.title }}を直す — 議事録{% endblock %}
+
+{% block head %}
+<style>
+  textarea.minutes-body { min-height: 65vh; font-size: 16px; line-height: 1.7; }
+  .edit-help { margin-top: 10px; font-size: 14px; }
+  .edit-help ul { margin: 4px 0 0; padding-left: 1.3em; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ meeting.title }}を直す</h1>
+    <p class="page-sub">{{ meeting.started_at.strftime("%Y年%m月%d日 %H:%M") }}</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/minutes/{{ meeting.id }}"><i data-lucide="x"></i>やめる</a>
+  </div>
+</div>
+
+{% if error %}
+<div class="notice error"><i data-lucide="circle-alert"></i><p><strong>保存できませんでした。</strong>{{ error }}</p></div>
+{% endif %}
+
+<form method="post" action="/minutes/{{ meeting.id }}/edit" class="card">
+  <label for="body">議事録の本文</label>
+  <textarea id="body" name="body" class="minutes-body" spellcheck="false">{{ body }}</textarea>
+  <div class="form-foot">
+    <p class="hint">
+      {% if has_note %}保存すると、アプリの中の議事録と Obsidian のノートの両方が書き換わります。{% else %}保存すると、アプリの中の議事録が書き換わります。{% endif %}
+      直す前の内容は控えとして残します。
+    </p>
+    <button class="btn btn-primary" type="submit"><i data-lucide="save"></i>保存する</button>
+  </div>
+  <div class="edit-help">
+    書き方のめやす
+    <ul>
+      <li>「## 」で始まる行が見出し、「- 」で始まる行が箇条書きです</li>
+      <li>「話者1」を名前にしたいときは、その部分を書き換えてください</li>
+      <li>題名や日時、文字起こしへのリンクは自動で付くので、ここには出していません</li>
+    </ul>
+  </div>
+</form>
+{% endblock %}

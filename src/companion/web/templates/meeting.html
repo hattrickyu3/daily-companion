@@ -88,13 +88,15 @@
     <div class="card-head">
       <h2><i data-lucide="file-text"></i>議事録</h2>
       <div class="actions">
+        <a class="btn btn-primary" href="/minutes/{{ meeting.id }}/edit"><i data-lucide="pencil"></i>手で直す</a>
         {% if note_link %}<a class="btn" href="{{ note_link }}"><i data-lucide="library"></i>ノートで開く</a>{% endif %}
         <a class="btn" href="/minutes/{{ meeting.id }}/audio"><i data-lucide="download"></i>録音</a>
-        <form method="post" action="/minutes/{{ meeting.id }}/retry" onsubmit="return confirm('清書をやり直しますか？（数分かかります）')">
+        <form method="post" action="/minutes/{{ meeting.id }}/retry" onsubmit="return confirm('{% if meeting.hand_edited %}手で直した内容は消えて、AIが書き直した議事録に置き換わります。{% endif %}清書をやり直しますか？（数分かかります）')">
           <button class="btn" type="submit"><i data-lucide="refresh-cw"></i>清書をやり直す</button>
         </form>
       </div>
     </div>
+    {% if meeting.hand_edited %}<p class="hint" style="margin-bottom:10px"><span class="tag">手で直した版</span></p>{% endif %}
     <div class="final">{{ final_html|safe }}</div>
   </section>
   {% endif %}
