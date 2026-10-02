@@ -126,3 +126,35 @@ def test_参加者を入れて録音を始め後から直せる(env) -> None:
     with session(db_path) as conn:
         assert db.get_meeting(conn, 1).participants == "自分、田中、佐藤、先生"
     assert "参加者：自分、田中、佐藤、先生" in client.get("/minutes/1").text
+
+
+def test_録音の長さを秒までわかる形にする() -> None:
+    from companion.web.minutes_routes import duration_label
+
+    assert duration_label(48_900) == "48秒"
+    assert duration_label(725_000) == "12分05秒"
+    assert duration_label(4_320_000) == "1時間12分"
+
+
+def test_一覧には要点の最初の1行を出す() -> None:
+    from datetime import datetime
+
+    from companion.web.minutes_routes import summary_line
+
+    base = dict(id=1, title="ゼミ", started_at=datetime(2026, 10, 2), status="done")
+    polished = db.Meeting(**base, final_text="## 要点\n\n- 田中さんが報告した。\n- 次回は10月9日\n\n## 話し合ったこと\n- x")
+    drafted = db.Meeting(**base, draft={"要点": "- 下書きの要点"})
+
+    assert summary_line(polished) == "田中さんが報告した。"
+    assert summary_line(drafted) == "下書きの要点"
+    assert summary_line(db.Meeting(**base)) == ""
+
+
+def test_一覧の各行に開くボタンがある(env) -> None:
+    client, _, _ = env
+    client.post("/minutes", data={"title": "ゼミ"})
+
+    page = client.get("/minutes").text
+
+    assert 'href="/minutes/1" aria-label="ゼミを開く"' in page
+    assert "0秒" in page

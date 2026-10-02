@@ -1,12 +1,26 @@
 {% extends "base.html" %}
 {% block title %}議事録 — daily-companion{% endblock %}
 
+{% block head %}
+<style>
+  table.meetings td { vertical-align: middle; }
+  /* 名前と要点の列に幅を回す. 日時と「開く」は中身の幅だけ取る */
+  table.meetings td.name { width: 100%; min-width: 0; }
+  table.meetings td.name .tag { margin-left: 6px; vertical-align: 1px; }
+  table.meetings td small { display: block; font-size: 14px; font-weight: 600; margin-top: 2px; }
+  table.meetings td.date small { font-variant-numeric: tabular-nums; }
+  .meeting-link { font-weight: 700; text-decoration: none; }
+  .meeting-link:hover { text-decoration: underline; }
+  table.meetings .btn { padding: 6px 10px; }
+</style>
+{% endblock %}
+
 {% block content %}
 {% set labels = {"recording": "録音中", "finishing": "清書中", "done": "完成", "failed": "要確認"} %}
 <div class="page-head">
   <div>
     <h1>議事録</h1>
-    {% if meetings %}<p class="page-sub">{{ meetings|length }}件</p>{% endif %}
+    {% if rows %}<p class="page-sub">{{ rows|length }}件</p>{% endif %}
   </div>
 </div>
 
@@ -33,17 +47,21 @@
   </p>
 </section>
 
-{% if meetings %}
+{% if rows %}
 <div class="table-wrap" style="margin-top:14px">
-  <table>
-    <thead><tr><th>日時</th><th>名前</th><th>録音</th><th>状態</th></tr></thead>
+  <table class="meetings">
+    <thead><tr><th>名前</th><th>日時</th><th></th></tr></thead>
     <tbody>
-      {% for m in meetings %}
+      {% for row in rows %}
+      {% set m = row.meeting %}
       <tr>
-        <td class="date">{{ m.started_at.strftime("%Y/%m/%d %H:%M") }}</td>
-        <td><a class="row-link" href="/minutes/{{ m.id }}">{{ m.title }}</a></td>
-        <td class="num nowrap">{{ m.total_ms // 60000 }}分</td>
-        <td><span class="tag{% if m.status == 'done' %} ok{% elif m.status == 'failed' %} ng{% endif %}">{{ labels.get(m.status, m.status) }}</span></td>
+        <td class="name">
+          <a class="meeting-link" href="/minutes/{{ m.id }}">{{ m.title }}</a>
+          <span class="tag{% if m.status == 'done' %} ok{% elif m.status == 'failed' %} ng{% endif %}">{{ labels.get(m.status, m.status) }}</span>
+          {% if row.summary %}<small>{{ row.summary }}</small>{% endif %}
+        </td>
+        <td class="date">{{ m.started_at.strftime("%m/%d") }}<small>{{ m.started_at.strftime("%H:%M") }}・{{ row.duration }}</small></td>
+        <td class="ops"><a class="btn" href="/minutes/{{ m.id }}" aria-label="{{ m.title }}を開く">開く<i data-lucide="chevron-right"></i></a></td>
       </tr>
       {% endfor %}
     </tbody>

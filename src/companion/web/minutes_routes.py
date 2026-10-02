@@ -119,6 +119,36 @@ def snapshot(runtime: MinutesRuntime, meeting_id: int) -> dict[str, Any]:
     }
 
 
+SUMMARY_LENGTH = 50
+
+
+def duration_label(total_ms: int) -> str:
+    """録音の長さを「48秒」「12分05秒」「1時間12分」の形にする."""
+    seconds = total_ms // 1000
+    if seconds < 60:
+        return f"{seconds}秒"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}分{seconds:02d}秒"
+    return f"{minutes // 60}時間{minutes % 60}分"
+
+
+def summary_line(meeting: db.Meeting) -> str:
+    """一覧で会議を見分けるための1行. 清書の「要点」の最初の項目、無ければ録音中の下書きの要点."""
+    text = meeting.final_text or ""
+    if "## 要点" in text:
+        text = text.split("## 要点", 1)[1]
+    else:
+        text = meeting.draft.get("要点", "")
+    for line in text.splitlines():
+        stripped = line.strip().lstrip("-・*").strip()
+        if stripped and not stripped.startswith("#"):
+            return stripped[:SUMMARY_LENGTH] + ("…" if len(stripped) > SUMMARY_LENGTH else "")
+        if stripped.startswith("##"):
+            break
+    return ""
+
+
 def _clean_participants(raw: str) -> str:
     """参加者の入力を「田中、佐藤」の形にそろえる."""
     return "、".join(parse_participants(CONTROL_CHARS.sub(" ", raw)[:MAX_PARTICIPANTS_LENGTH]))
@@ -131,7 +161,14 @@ def minutes_page(request: Request) -> HTMLResponse:
         meetings = db.list_meetings(conn)
     return templates.TemplateResponse(
         request, "minutes.html",
-        {"meetings": meetings, "default_title": DEFAULT_TITLE, "minutes_dir": get_config().minutes_dir},
+        {
+            "rows": [
+                {"meeting": m, "duration": duration_label(m.total_ms), "summary": summary_line(m)}
+                for m in meetings
+            ],
+            "default_title": DEFAULT_TITLE,
+            "minutes_dir": get_config().minutes_dir,
+        },
     )
 
 
