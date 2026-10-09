@@ -41,7 +41,8 @@ def test_新しく録音すると会議の画面に移る(env) -> None:
     assert "ゼミ（第3回）" in page.text
     assert "録音を始める" in page.text
     assert "/static/minutes/recorder.js" in page.text
-    assert "iPhoneのノイズ除去を使う" in page.text
+    assert "マイクのノイズ除去を使う" in page.text
+    assert "オンライン会議の相手の声も録る" in page.text
 
 
 def test_一覧に会議が出る(env) -> None:

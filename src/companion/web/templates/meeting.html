@@ -77,8 +77,13 @@
     </div>
     <div class="rec-foot">
       <span id="upload-state">すべてPCに保存済み</span>
-      <label class="noise-toggle"><input type="checkbox" id="noise-suppression">iPhoneのノイズ除去を使う</label>
-      <span>録音中は画面をつけたまま、Safariを前に出しておいてください</span>
+      <label class="noise-toggle"><input type="checkbox" id="noise-suppression">マイクのノイズ除去を使う</label>
+      <label class="noise-toggle" id="system-audio-row" hidden><input type="checkbox" id="system-audio">オンライン会議の相手の声も録る（PC）</label>
+      <span>iPhoneでは、録音中は画面をつけたまま、Safariを前に出しておいてください</span>
+    </div>
+    <div class="notice" id="system-audio-hint" hidden style="margin-top:10px">
+      <i data-lucide="monitor-speaker"></i>
+      <p>「録音を始める」を押すと、共有する画面を選ぶ画面が出ます。Zoom・Teamsなどのアプリなら「画面全体」を選んで<strong>「システム音声も共有する」をオン</strong>に、ブラウザの会議（Google Meetなど）ならその会議のタブを選んでください。スピーカーだと相手の声が二重に録れることがあるので、イヤホンがおすすめです。</p>
     </div>
   </section>
   {% endif %}

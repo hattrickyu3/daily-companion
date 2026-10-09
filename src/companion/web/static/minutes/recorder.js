@@ -279,9 +279,12 @@ function makeSegmenter(onSegment, onLevel) {
 // ---- 録音そのもの ----
 // noiseSuppression: iPhoneのノイズ除去を使うか。前もってノイズを消すと精度が落ちるという研究もあるが、
 // 2026-10-03 に実際の環境で録り比べたら、使った方が文字起こしが良かったので既定は使う。
-function createRecorder(meetingId, { onLevel, onInterrupted, noiseSuppression = true }) {
+// systemAudio: PCのオンライン会議用。相手の声（PCで鳴っている音）を画面共有の仕組みで取り込み、
+// 自分のマイクの声と混ぜて1本にする。PCのChrome・Edgeで使える（iPhoneでは使えない）。
+function createRecorder(meetingId, { onLevel, onInterrupted, noiseSuppression = true, systemAudio = false }) {
   let ctx = null;
   let stream = null;
+  let display = null;
   let node = null;
   let segmenter = null;
   let lastSegId = 0;
@@ -302,8 +305,19 @@ function createRecorder(meetingId, { onLevel, onInterrupted, noiseSuppression = 
     // iOSはボタンを押した直後でないと音を扱わせてくれないので、待ち（await）より前に作る
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     ctx.resume().catch(() => {});
+    if (systemAudio) {
+      // 画面共有もボタンを押した直後でないと頼めないので、マイクより先に頼む。
+      // Chromeは映像なしの共有を許さないので映像も受け取るが、使わない。
+      display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, systemAudio: "include" });
+      if (!display.getAudioTracks().length) {
+        display.getTracks().forEach((t) => t.stop());
+        display = null;
+        throw new Error("PCの音が共有されていません。共有する画面を選ぶときに「システム音声も共有する」をオンにしてください");
+      }
+    }
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: false, noiseSuppression, autoGainControl: true },
+      // オンライン会議では相手の声がスピーカーから入り込むので、エコー除去を使う
+      audio: { channelCount: 1, echoCancellation: systemAudio, noiseSuppression, autoGainControl: true },
     });
     await ctx.audioWorklet.addModule("/static/minutes/worklet.js");
     const source = ctx.createMediaStreamSource(stream);
@@ -312,6 +326,11 @@ function createRecorder(meetingId, { onLevel, onInterrupted, noiseSuppression = 
     segmenter = makeSegmenter((s, samples) => saveSegment(s, samples), onLevel);
     node.port.onmessage = (e) => segmenter.push(resample(e.data));
     source.connect(node);
+    if (display) {
+      // 同じ入口に2つつなぐと足し合わされる（自分の声＋相手の声）
+      ctx.createMediaStreamSource(new MediaStream(display.getAudioTracks())).connect(node);
+      display.getTracks().forEach((t) => t.addEventListener("ended", onInterrupted));
+    }
     // 出力につながないと動かないブラウザがあるので、音量0でつないでおく
     const mute = ctx.createGain();
     mute.gain.value = 0;
@@ -323,16 +342,18 @@ function createRecorder(meetingId, { onLevel, onInterrupted, noiseSuppression = 
 
   async function stop() {
     if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (display) display.getTracks().forEach((t) => t.stop());
     // マイクを止めたあと、途中まで届いている音を受け取りきってから最後の切れ端を作る
     await new Promise((r) => setTimeout(r, 200));
     if (segmenter) segmenter.flush();
     if (ctx) await ctx.close().catch(() => {});
-    ctx = null; stream = null; node = null; segmenter = null;
+    ctx = null; stream = null; display = null; node = null; segmenter = null;
     await Promise.all(Array.from(saving));
   }
 
   function healthy() {
-    return !!(ctx && ctx.state === "running" && stream && stream.getAudioTracks().every((t) => t.readyState === "live"));
+    const live = (s) => s.getAudioTracks().every((t) => t.readyState === "live");
+    return !!(ctx && ctx.state === "running" && stream && live(stream) && (!systemAudio || (display && live(display))));
   }
 
   return { start, stop, healthy };

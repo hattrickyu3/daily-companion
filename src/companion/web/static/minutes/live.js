@@ -146,13 +146,28 @@
     try { localStorage.setItem("minutes-noise-suppression", noiseBox.checked ? "on" : "off"); } catch (e) { /* 同上 */ }
   });
 
+  // オンライン会議の相手の声（PCの音）も録るか。画面共有ができるブラウザ（PCのChrome・Edge）でだけ出す
+  const systemBox = $("#system-audio");
+  const systemRow = $("#system-audio-row");
+  const canShareAudio = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  systemRow.hidden = !canShareAudio;
+  try { systemBox.checked = canShareAudio && localStorage.getItem("minutes-system-audio") === "on"; } catch (e) { /* 覚えられなくても動く */ }
+  const showSystemHint = () => { $("#system-audio-hint").hidden = !systemBox.checked; };
+  systemBox.addEventListener("change", () => {
+    try { localStorage.setItem("minutes-system-audio", systemBox.checked ? "on" : "off"); } catch (e) { /* 同上 */ }
+    showSystemHint();
+  });
+  showSystemHint();
+
   async function begin() {
     recorder = createRecorder(meetingId, {
       onLevel: (v) => { level.style.width = `${Math.round(v * 100)}%`; },
       onInterrupted,
       noiseSuppression: noiseBox.checked,
+      systemAudio: systemBox.checked,
     });
     noiseBox.disabled = true; // 録音の途中では切り替えない
+    systemBox.disabled = true;
     await recorder.start();
     recording = true;
     resumeBtn.hidden = true;
@@ -169,7 +184,14 @@
       stopBtn.hidden = false;
     } catch (e) {
       startBtn.disabled = false;
-      showNotice($("#mic-notice"), `マイクを使えませんでした（${e.message || e}）。設定アプリ → Safari → マイク を「許可」にしてください。`);
+      // 途中まで開いたマイクや画面共有を閉じておく（開いたままだと次に押したとき取り合いになる）
+      if (recorder) recorder.stop().catch(() => {});
+      const reason = e.message || e;
+      showNotice($("#mic-notice"), systemBox.checked
+        ? `録音を始められませんでした（${reason}）。画面の共有とマイクの使用を許可してください。`
+        : `マイクを使えませんでした（${reason}）。設定アプリ → Safari → マイク を「許可」にしてください。`);
+      noiseBox.disabled = false;
+      systemBox.disabled = false;
     }
   });
 
