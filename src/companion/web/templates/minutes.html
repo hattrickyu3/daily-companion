@@ -61,6 +61,73 @@
   </p>
 </section>
 
+<section class="card" style="margin-top:14px">
+  <h2>ボイスメモから作る</h2>
+  {% if import_error %}<div class="notice error"><i data-lucide="alert-triangle"></i><p>{{ import_error }}</p></div>{% endif %}
+  <form method="post" action="/minutes/import" enctype="multipart/form-data" id="import-form">
+    <div class="fields">
+      <div>
+        <label for="import-title">会議の名前</label>
+        <input type="text" id="import-title" name="title" value="{{ default_title }}" maxlength="60">
+      </div>
+      <div>
+        <label for="import-participants">参加者（任意）</label>
+        <input type="text" id="import-participants" name="participants" maxlength="200" placeholder="例: 自分、田中、佐藤、先生">
+      </div>
+      <div>
+        <label for="import-audio">録音ファイル</label>
+        <input type="file" id="import-audio" name="audio" accept="audio/*,.m4a,.mp3,.wav,.aac" required>
+      </div>
+    </div>
+    <input type="hidden" name="recorded_at" id="import-recorded-at" value="0">
+    <div class="form-foot">
+      <p class="hint">ボイスメモは画面を消しても録音が続きます。録り終えたら、ボイスメモの「…」→「共有」→「"ファイル"に保存」で保存してから、ここで選んでください。</p>
+      <button class="btn btn-primary" type="submit" id="import-submit"><i data-lucide="upload"></i>送って議事録にする</button>
+    </div>
+  </form>
+</section>
+<section class="card" style="margin-top:14px">
+  <h2>録音アプリから自動で送る</h2>
+  {% if recorder_folder %}
+  <p class="hint">Recorder Plus の自動バックアップ先を Google Drive にしておくと、録音がこのPCの「{{ recorder_folder }}」に届きます。1分ごとに見て議事録にし、できたらiPhoneに通知します。議事録にした録音はフォルダから消します（Googleドライブのごみ箱に入り、元の録音はこのアプリの中に残ります）。</p>
+  <p class="hint" style="margin-top:6px">Recorder Plus はアプリを開いている間（録音中・画面に出している間）に、Wi-Fiのときだけ送ります。録音を止めたら、画面の下が「Done, all in …」になるまで開いておいてください。</p>
+  {% else %}
+  <p class="hint">.env の RECORDER_FOLDER に、Googleドライブ パソコン版で Recorder Plus の録音が入るフォルダを書いてアプリを起動し直すと、届いた録音を自動で議事録にします。</p>
+  {% endif %}
+  {% if webdav %}
+  <details style="margin-top:10px">
+    <summary>WebDAVで直接送る（Recorder Plus の有料版）</summary>
+    <div class="table-wrap" style="margin-top:10px">
+      <table>
+        <tbody>
+          <tr><th>ホスト</th><td><code>{{ webdav.host }}</code></td></tr>
+          <tr><th>ユーザー</th><td><code>{{ webdav.user }}</code></td></tr>
+          <tr><th>パスワード</th><td>{% if webdav.password %}<code>{{ webdav.password }}</code>{% else %}TailscaleのhttpsのアドレスかこのPCで開くと表示します{% endif %}</td></tr>
+          <tr><th>Https</th><td>オン</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+</section>
+<script>
+  // ファイルの日時（ボイスメモでは録り終えた時刻）を送り、会議の始まりの時刻を合わせる.
+  (() => {
+    const form = document.getElementById("import-form");
+    const input = document.getElementById("import-audio");
+    const recordedAt = document.getElementById("import-recorded-at");
+    const submit = document.getElementById("import-submit");
+    input.addEventListener("change", () => {
+      const file = input.files[0];
+      recordedAt.value = file ? String(file.lastModified || 0) : "0";
+    });
+    form.addEventListener("submit", () => {
+      submit.disabled = true;
+      submit.textContent = "送っています…（長い録音は数分かかります）";
+    });
+  })();
+</script>
+
 {% if rows %}
 <div class="table-wrap" style="margin-top:14px">
   <table class="meetings">

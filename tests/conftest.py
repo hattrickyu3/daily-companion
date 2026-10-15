@@ -21,3 +21,9 @@ def conn(tmp_path) -> Iterator[sqlite3.Connection]:
         yield connection
     finally:
         connection.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_recorder_folder(monkeypatch) -> None:
+    """本物の .env に見張るフォルダが書いてあっても、テスト中は本物のGoogleドライブを見に行かない."""
+    monkeypatch.setenv("RECORDER_FOLDER", "")

@@ -18,7 +18,7 @@ from companion.db import meetings as db
 from companion.db.connection import apply_schema, session
 from companion.integrations.claude_runner import ClaudeError
 from companion.integrations.whisper import TimedText, WhisperError, clean_text
-from companion.services.minutes_audio import AudioStore
+from companion.services.minutes_audio import AudioError, AudioStore
 from companion.services.minutes_editor import LiveEditor
 from companion.services.minutes_final import timed_lines
 from companion.services.minutes_hub import MinutesHub
@@ -94,6 +94,7 @@ def make_runtime(
         transcriber=transcriber,
         tz=TZ,
         minutes_dir=tmp_path / "vault" / "研究" / "ゼミ議事録",
+        recordings_dir=tmp_path / "録音",
         final_transcriber=final_transcriber,
         diarizer=diarizer,
         editor_factory=lambda _id: editor or FakeEditor(),
@@ -185,9 +186,12 @@ def test_録音を終えると清書して保管庫に書き出す(db_path, tmp_
     note = (folder / "2026-10-02 ゼミ.md").read_text(encoding="utf-8")
     assert note.startswith("# 2026-10-02 ゼミ\n← [[ゼミ議事録まとめ]]")
     assert "- 清書した" in note
-    assert "[[音声/2026-10-02 ゼミ.m4a|2026-10-02 ゼミ.m4a]]" in note
+    # 録音はOneDriveの容量を使わないよう、保管庫の外（PCの録音フォルダ）に置き、ノートには場所を書く
+    recording = tmp_path / "録音" / "2026-10-02 ゼミ.m4a"
+    assert recording.exists()
+    assert f"- 録音：PCの `{recording}`" in note
+    assert not (folder / "音声").exists()
     assert "中間発表は10月9日です" in (folder / "2026-10-02 ゼミ 文字起こし.md").read_text(encoding="utf-8")
-    assert (folder / "音声" / "2026-10-02 ゼミ.m4a").exists()
     assert "- [[2026-10-02 ゼミ]]" in (folder / "ゼミ議事録まとめ.md").read_text(encoding="utf-8")
     assert meeting(db_path, meeting_id).note_path == str(folder / "2026-10-02 ゼミ.md")
 
@@ -471,3 +475,57 @@ def test_参加者が無ければ人数は自動にする(db_path, tmp_path) -> 
     wait_until(lambda: meeting(db_path, meeting_id).status == "done")
 
     assert diarizer.num_speakers is None
+
+
+def test_録り終えた音声を取り込むと切れ端に分けて清書まで進める(db_path, tmp_path) -> None:
+    editor = FakeEditor()
+    runtime = make_runtime(db_path, tmp_path, FakeTranscriber(["始めます", "以上です"]), editor=editor)
+    meeting_id = new_meeting(db_path)
+
+    count = runtime.import_recording(meeting_id, [make_wav(30.0), make_wav(5.0)], SEG)
+
+    assert count == 2
+    assert [s.seg_id for s in segments(db_path, meeting_id)] == [SEG, SEG + 30000]
+    wait_until(lambda: meeting(db_path, meeting_id).status == "done")
+    assert [s.text for s in segments(db_path, meeting_id)] == ["始めます", "以上です"]
+    # 録り終えた音声なので、録音中のようにHaikuに少しずつ編集させない
+    assert editor.notified == 0
+
+
+def test_取り込んだ音声が空なら断る(db_path, tmp_path) -> None:
+    runtime = make_runtime(db_path, tmp_path, FakeTranscriber([]))
+    meeting_id = new_meeting(db_path)
+
+    with pytest.raises(AudioError):
+        runtime.import_recording(meeting_id, [], SEG)
+
+    assert meeting(db_path, meeting_id).status == "recording"
+
+
+def test_取り込みの途中で読めなくなっても読めた分で清書する(db_path, tmp_path) -> None:
+    runtime = make_runtime(db_path, tmp_path, FakeTranscriber(["途中まで"]))
+    meeting_id = new_meeting(db_path)
+
+    def chunks():
+        yield make_wav(30.0)
+        raise AudioError("壊れていた")
+
+    assert runtime.import_recording(meeting_id, chunks(), SEG) == 1
+    wait_until(lambda: meeting(db_path, meeting_id).status == "failed")
+    assert [s.text for s in segments(db_path, meeting_id)] == ["途中まで"]
+    # 全部そろった議事録に見えないよう、要確認にして理由を出す
+    assert "途中から読めなかった" in meeting(db_path, meeting_id).error
+    assert meeting(db_path, meeting_id).final_text
+
+
+def test_知らせてほしい取り込みは清書が終わったら知らせる(db_path, tmp_path) -> None:
+    runtime = make_runtime(db_path, tmp_path, FakeTranscriber(["はい"]))
+    notified: list[tuple[int | None, str, str | None]] = []
+    runtime.set_notifier(lambda meeting_id, status, error: notified.append((meeting_id, status, error)))
+    quiet, loud = new_meeting(db_path), new_meeting(db_path)
+
+    runtime.import_recording(quiet, [make_wav(1.0)], SEG)
+    runtime.import_recording(loud, [make_wav(1.0)], SEG, notify=True)
+
+    wait_until(lambda: meeting(db_path, quiet).status == "done" and meeting(db_path, loud).status == "done")
+    wait_until(lambda: notified == [(loud, "done", None)])

@@ -26,6 +26,11 @@ MINUTES_AUDIO_DIR = DATA_DIR / "minutes"
 DIARIZATION_MODELS_DIR = DATA_DIR / "models" / "diarization"
 # 議事録ノートの置き場所（NOTES_DIR からの相対）。MINUTES_DIR が空のときに使う。
 DEFAULT_MINUTES_SUBDIR = Path("研究") / "ゼミ議事録"
+# 清書した会議の録音（m4a）を置く場所. 保管庫（OneDrive）の容量を使わないよう、PCの中に置く。
+DEFAULT_RECORDINGS_DIR = Path.home() / "録音"
+# 録音アプリ（Recorder Plus）からWebDAVで届いた録音の受け箱.
+WEBDAV_INBOX_DIR = DATA_DIR / "webdav"
+DEFAULT_WEBDAV_USER = "recorder"
 DEFAULT_WHISPER_MODEL = "large-v3-turbo"
 # 録音を終えたあと、録音全体を文字にし直すモデル. 遅いぶん正確.
 DEFAULT_WHISPER_FINAL_MODEL = "large-v3"
@@ -77,6 +82,13 @@ class Config:
     mail_results_file: Path | None = None
     # 清書した議事録ノートを書き出すフォルダ。None なら書き出さず、アプリの中にだけ残す。
     minutes_dir: Path | None = None
+    recordings_dir: Path = field(default=DEFAULT_RECORDINGS_DIR)
+    # 録音アプリからWebDAVで録音を受け取るときのユーザー名とパスワード. パスワードが空なら受け口を閉じておく.
+    webdav_user: str = DEFAULT_WEBDAV_USER
+    webdav_password: str = ""
+    webdav_inbox_dir: Path = field(default=WEBDAV_INBOX_DIR)
+    # 録音アプリ（Recorder Plus）がGoogleドライブに上げた録音が届く、PCのフォルダ. None なら見張らない.
+    recorder_folder: Path | None = None
     whisper_model: str = DEFAULT_WHISPER_MODEL
     whisper_final_model: str = DEFAULT_WHISPER_FINAL_MODEL
     minutes_audio_dir: Path = field(default=MINUTES_AUDIO_DIR)
@@ -158,6 +170,10 @@ def load_config() -> Config:
         notes_dir=notes_path,
         mail_results_file=Path(mail_results_file) if mail_results_file else None,
         minutes_dir=_resolve_minutes_dir(os.getenv("MINUTES_DIR", "").strip(), notes_path),
+        recordings_dir=Path(os.getenv("RECORDINGS_DIR", "").strip() or DEFAULT_RECORDINGS_DIR),
+        webdav_user=os.getenv("WEBDAV_USER", "").strip() or DEFAULT_WEBDAV_USER,
+        webdav_password=os.getenv("WEBDAV_PASSWORD", "").strip(),
+        recorder_folder=Path(folder) if (folder := os.getenv("RECORDER_FOLDER", "").strip()) else None,
         whisper_model=os.getenv("WHISPER_MODEL", "").strip() or DEFAULT_WHISPER_MODEL,
         whisper_final_model=os.getenv("WHISPER_FINAL_MODEL", "").strip() or DEFAULT_WHISPER_FINAL_MODEL,
     )

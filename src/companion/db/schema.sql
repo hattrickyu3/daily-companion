@@ -127,6 +127,15 @@ CREATE TABLE IF NOT EXISTS meetings (
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 録音アプリからWebDAVで届いた録音。同じファイルが送り直されても議事録を二重に作らないよう覚えておく。
+CREATE TABLE IF NOT EXISTS received_recordings (
+    path        TEXT NOT NULL,              -- 受け箱の中の場所（/ 区切り）
+    size        INTEGER NOT NULL,           -- バイト数. 同じ名前でも中身が変われば別の録音として扱う
+    meeting_id  INTEGER,                    -- 作った会議. 読めなかったときは NULL
+    received_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (path, size)
+);
+
 -- 音声の切れ端1つ = 1行。seg_id はiPhone側で録り始めた時刻（エポックミリ秒）で、送り直しても同じ値になる。
 -- status: pending（文字起こし待ち）/ done / failed
 CREATE TABLE IF NOT EXISTS meeting_segments (

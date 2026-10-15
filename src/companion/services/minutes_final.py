@@ -6,8 +6,8 @@ Sonnet 5.5 に文字起こしの全文と録音中の下書きを渡し、議事
 書き出すもの（MINUTES_DIR の中）:
     2026-10-02 ゼミ.md              議事録
     2026-10-02 ゼミ 文字起こし.md    文字起こしの全文
-    音声\\2026-10-02 ゼミ.m4a         録音
     ゼミ議事録まとめ.md              一覧（無ければ作る）
+録音（m4a）は保管庫の外の RECORDINGS_DIR に置く。保管庫はOneDriveの中にあり、容量が足りなくなるため（2026-10-15）。
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ log = logging.getLogger(__name__)
 # 別名の "sonnet" は Sonnet 5 を指すので、5.5 は名前で指定する（2026-10-02 確認）.
 POLISH_MODEL = "claude-sonnet-5-5"
 POLISH_TIMEOUT_SEC = 900
-AUDIO_SUBDIR = "音声"
 WEEKDAYS = "月火水木金土日"
 # ファイル名に使えない・Obsidianのリンクを壊す文字（保管庫の CLAUDE.md の決まり）.
 UNSAFE_NAME_CHARS = re.compile(r'[#^\[\]|\\/:*?"<>]')
@@ -151,7 +150,7 @@ def _duration_label(total_ms: int) -> str:
 
 def build_minutes_note(
     meeting: Meeting, stem: str, index_name: str, body: str, *,
-    total_ms: int, has_audio: bool, polished: bool,
+    total_ms: int, audio_path: Path | None, polished: bool,
 ) -> str:
     """議事録ノートの全文."""
     start = meeting.started_at
@@ -163,8 +162,9 @@ def build_minutes_note(
         f"- 日時：{start:%Y-%m-%d}（{WEEKDAYS[start.weekday()]}）{start:%H:%M}{end}（録音 {_duration_label(total_ms)}）",
         f"- 文字起こし：[[{stem} 文字起こし]]",
     ]
-    if has_audio:
-        lines.append(f"- 録音：[[{AUDIO_SUBDIR}/{stem}.m4a|{stem}.m4a]]")
+    if audio_path is not None:
+        # 保管庫の外なのでObsidianのリンクにはできない. 場所だけ書く.
+        lines.append(f"- 録音：PCの `{audio_path}`")
     lines += ["", "> [!note] この議事録について", "> 録音の文字起こしからAI（Claude）が作ったもの。聞き間違いが混ざっていることがある。"]
     if not polished:
         lines += [
@@ -194,16 +194,16 @@ def add_to_index(index_path: Path, stem: str) -> None:
 
 def write_notes(
     folder: Path, meeting: Meeting, *, body: str, polished: bool,
-    transcript: list[str], total_ms: int, audio_m4a: Path | None,
+    transcript: list[str], total_ms: int, audio_m4a: Path | None, audio_dir: Path | None = None,
 ) -> NoteFiles:
-    """議事録・文字起こし・録音を保管庫に書き出す."""
+    """議事録と文字起こしを保管庫に書き出し、録音を audio_dir に置く（None なら録音は置かない）."""
     folder.mkdir(parents=True, exist_ok=True)
     stem = note_stem(meeting, folder, meeting.note_path)
     index_name = f"{folder.name}まとめ"
 
     audio_target = None
-    if audio_m4a is not None and audio_m4a.exists():
-        audio_target = folder / AUDIO_SUBDIR / f"{stem}.m4a"
+    if audio_dir is not None and audio_m4a is not None and audio_m4a.exists():
+        audio_target = audio_dir / f"{stem}.m4a"
         audio_target.parent.mkdir(parents=True, exist_ok=True)
         audio_target.write_bytes(audio_m4a.read_bytes())
 
@@ -212,7 +212,7 @@ def write_notes(
     transcript_path.write_text(build_transcript_note(stem, transcript), encoding="utf-8")
     minutes_path.write_text(
         build_minutes_note(meeting, stem, index_name, body, total_ms=total_ms,
-                           has_audio=audio_target is not None, polished=polished),
+                           audio_path=audio_target, polished=polished),
         encoding="utf-8",
     )
     add_to_index(folder / f"{index_name}.md", stem)

@@ -14,7 +14,7 @@ import logging
 import queue
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +26,7 @@ from companion.db import meetings as db
 from companion.integrations.claude_runner import ClaudeError
 from companion.integrations.diarization import Diarizer, DiarizationError, SpeakerTurn
 from companion.integrations.whisper import Transcriber, WhisperError
-from companion.services.minutes_audio import AudioStore, encode_m4a, read_samples
+from companion.services.minutes_audio import AudioError, AudioStore, encode_m4a, read_samples
 from companion.services.minutes_draft import render_markdown
 from companion.services.minutes_editor import LiveEditor
 from companion.services.minutes_final import polish, timed_lines, transcript_lines, write_notes
@@ -41,6 +41,9 @@ WORKER_IDLE_SEC = 60
 FINISH_STALL_SEC = 300
 M4A_NAME = "録音.m4a"
 
+# 清書が終わったことを知らせる係. (会議の id（会議を作る前の失敗なら None）, 状態, エラー文).
+Notifier = Callable[[int | None, str, str | None], None]
+
 
 class MinutesRuntime:
     """アプリ全体で1つ. 文字起こしの順番待ちと、会議ごとの編集係を持つ."""
@@ -53,6 +56,7 @@ class MinutesRuntime:
         transcriber: Transcriber,
         tz: ZoneInfo,
         minutes_dir: Path | None,
+        recordings_dir: Path | None = None,
         final_transcriber: Transcriber | None = None,
         diarizer: Diarizer | None = None,
         hub: MinutesHub | None = None,
@@ -69,6 +73,8 @@ class MinutesRuntime:
         self._diarizer = diarizer
         self._tz = tz
         self._minutes_dir = minutes_dir
+        # 清書した会議の録音（m4a）を置くフォルダ. None なら置かない（アプリの中には残る）.
+        self._recordings_dir = recordings_dir
         self._polisher = polisher
         self._editor_factory = editor_factory or (
             lambda meeting_id: LiveEditor(meeting_id, hub=self.hub, open_db=open_db, tz=tz)
@@ -77,6 +83,11 @@ class MinutesRuntime:
         self._queued: set[tuple[int, int]] = set()
         self._editors: dict[int, LiveEditor] = {}
         self._finishing: set[int] = set()
+        # 取り込んだ音声ファイルが途中から読めなかった会議. 清書のあとに「要確認」として知らせる.
+        self._import_warnings: dict[int, str] = {}
+        # 清書が終わったらiPhoneに知らせる会議（録音アプリから自動で届いたもの）と、知らせる係.
+        self._notify_ids: set[int] = set()
+        self._notifier: Notifier | None = None
         self._lock = threading.Lock()
         self._started = False
 
@@ -112,6 +123,60 @@ class MinutesRuntime:
         if segment is not None and segment.status == db.SEGMENT_PENDING:
             self.hub.publish(meeting_id, self.segment_event(segment))
             self._enqueue(meeting_id, seg_id)
+
+    def set_notifier(self, notifier: Notifier) -> None:
+        """清書が終わったことを知らせる係を決める（iPhoneへの通知）."""
+        self._notifier = notifier
+
+    def notify(self, meeting_id: int | None, status: str, error: str | None) -> None:
+        """知らせる. 会議を作る前に失敗したときは meeting_id が None. 通知の失敗で議事録づくりは止めない."""
+        if self._notifier is None:
+            return
+        try:
+            self._notifier(meeting_id, status, error)
+        except Exception:  # noqa: BLE001 - 通知が届かないだけで議事録はできている
+            log.exception("could not notify about meeting %s", meeting_id)
+
+    def import_recording(
+        self, meeting_id: int, chunks: Iterable[bytes], start_ms: int, *, notify: bool = False
+    ) -> int:
+        """録り終えた音声（切れ端に分けたWAV）を取り込み、清書まで進める. 取り込めた切れ端の数を返す.
+
+        録音中とちがい、Haikuに少しずつ編集させる必要はないので、全部を保存して清書中にしてから
+        文字起こしの順番待ちに入れる（清書中の会議には編集係を作らない）。
+
+        notify が True なら、清書が終わったときに知らせる（画面を見ていない、自動で届いた録音のため）。
+
+        Raises:
+            AudioError: 1つも取り込めなかった.
+        """
+        seg_ids: list[int] = []
+        offset_ms = 0
+        try:
+            for data in chunks:
+                seg_id = start_ms + offset_ms
+                duration_ms = self.audio.save_segment(meeting_id, seg_id, data)
+                with self._open_db() as conn:
+                    db.add_segment(conn, meeting_id, seg_id, duration_ms)
+                seg_ids.append(seg_id)
+                offset_ms += duration_ms
+        except AudioError:
+            if not seg_ids:
+                raise
+            # 途中で読めなくなったファイル. 読めたところまでで議事録を作り、そのことを知らせる.
+            log.warning("imported audio for meeting %s broke after %d segments", meeting_id, len(seg_ids))
+            self._import_warnings[meeting_id] = (
+                f"録音ファイルが途中から読めなかったので、はじめの約{offset_ms // 60000}分だけで議事録を作りました。"
+            )
+        if not seg_ids:
+            raise AudioError("音声が入っていませんでした。")
+        if notify:
+            with self._lock:
+                self._notify_ids.add(meeting_id)
+        self.finish(meeting_id)
+        for seg_id in seg_ids:
+            self._enqueue(meeting_id, seg_id)
+        return len(seg_ids)
 
     def retry_transcription(self, meeting_id: int) -> int:
         with self._open_db() as conn:
@@ -212,17 +277,24 @@ class MinutesRuntime:
             db.set_status(conn, meeting_id, status, error=error)
         with self._lock:
             self._finishing.discard(meeting_id)
+            wants_notice = meeting_id in self._notify_ids
+            self._notify_ids.discard(meeting_id)
         self.hub.publish(meeting_id, {"type": "status", "status": status, "error": error})
+        if wants_notice:
+            self.notify(meeting_id, status, error)
 
     def _wait_for_transcription(self, meeting_id: int) -> None:
-        last_count, last_change = -1, time.monotonic()
+        # 文字起こしの順番待ちは全部の会議で1列. ほかの会議（長い録音の取り込みなど）の分が
+        # 進んでいる間も「止まっていない」とみなす.
+        last_progress, last_change = None, time.monotonic()
         while time.monotonic() - last_change < FINISH_STALL_SEC:
             with self._open_db() as conn:
                 count = db.count_pending(conn, meeting_id)
             if count == 0:
                 return
-            if count != last_count:
-                last_count, last_change = count, time.monotonic()
+            progress = (count, self._queue.qsize())
+            if progress != last_progress:
+                last_progress, last_change = progress, time.monotonic()
             time.sleep(1)
 
     def _finish(self, meeting_id: int, *, keep_previous: bool = False) -> tuple[str, str | None]:
@@ -236,6 +308,8 @@ class MinutesRuntime:
         if meeting is None:
             return db.FAILED, "会議が見つかりません。"
         errors: list[str] = []
+        if warning := self._import_warnings.pop(meeting_id, None):
+            errors.append(warning)
         lines = self._retranscribe(meeting)
         pending = sum(1 for s in segments if s.status == db.SEGMENT_PENDING)
         failed = sum(1 for s in segments if s.status == db.SEGMENT_FAILED)
@@ -261,6 +335,7 @@ class MinutesRuntime:
                 files = write_notes(
                     self._minutes_dir, meeting, body=body, polished=polished, transcript=lines,
                     total_ms=sum(s.duration_ms for s in segments), audio_m4a=m4a,
+                    audio_dir=self._recordings_dir,
                 )
                 note_path = str(files.minutes)
             except OSError as exc:

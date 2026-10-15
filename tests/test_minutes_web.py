@@ -221,3 +221,138 @@ def test_再起動の直後に会議の画面をいきなり開いても足り�
     with TestClient(web_app.app) as client:
         assert client.get("/minutes/1").status_code == 200
         assert client.get("/minutes/1/edit", follow_redirects=False).status_code == 303
+
+
+def test_一覧にボイスメモを送る欄がある(env) -> None:
+    client, _, _ = env
+
+    response = client.get("/minutes")
+
+    assert 'action="/minutes/import"' in response.text
+    assert 'enctype="multipart/form-data"' in response.text
+
+
+def test_ボイスメモを送ると録り終えた時刻から会議を作り清書する(env, tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from test_minutes_import import make_m4a
+    from test_minutes_runtime import TZ
+
+    client, db_path, runtime = env
+    m4a = make_m4a(tmp_path, 65)
+    saved_at = datetime(2026, 10, 15, 15, 0, 0, tzinfo=TZ)
+
+    response = client.post(
+        "/minutes/import",
+        data={"title": "班のインタビュー", "participants": "自分、かなと", "recorded_at": str(int(saved_at.timestamp() * 1000))},
+        files={"audio": ("新規録音.m4a", m4a.read_bytes(), "audio/x-m4a")},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/minutes/1"
+    with session(db_path) as conn:
+        meeting = db.get_meeting(conn, 1)
+        assert meeting.title == "班のインタビュー"
+        assert meeting.participants == "自分、かなと"
+        # ファイルの日時は録り終えた時刻なので、長さの分だけさかのぼる
+        assert abs((saved_at - meeting.started_at).total_seconds() - 65) <= 1
+        assert len(db.list_segments(conn, 1)) == 3
+        wait_until(lambda: db.get_meeting(conn, 1).status == "done")
+    # 送られてきた元のファイルも残す
+    assert (runtime.audio.meeting_dir(1) / "元の録音.m4a").read_bytes() == m4a.read_bytes()
+
+
+def test_音声でないファイルを送ると会議を作らず理由を出す(env) -> None:
+    client, db_path, runtime = env
+
+    response = client.post(
+        "/minutes/import",
+        data={"title": "ゼミ"},
+        files={"audio": ("memo.txt", "ただのメモ".encode() * 50, "text/plain")},
+    )
+
+    assert response.status_code == 400
+    assert "音声ファイルとして読めませんでした" in response.text
+    with session(db_path) as conn:
+        assert db.list_meetings(conn) == []
+    assert not any(runtime.audio.root.rglob("*.txt"))
+
+
+def test_取り込みの途中で思わぬエラーが起きても清書中のまま固まらない(env, tmp_path: Path, monkeypatch) -> None:
+    from test_minutes_import import make_m4a
+
+    client, db_path, runtime = env
+
+    def broken(*args, **kwargs):
+        raise OSError("ディスクがいっぱい")
+
+    monkeypatch.setattr(runtime, "import_recording", broken)
+
+    response = client.post(
+        "/minutes/import",
+        data={"title": "ゼミ"},
+        files={"audio": ("新規録音.m4a", make_m4a(tmp_path, 3).read_bytes(), "audio/x-m4a")},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    with session(db_path) as conn:
+        meeting = db.get_meeting(conn, 1)
+    assert meeting.status == "failed"
+    assert "ディスクがいっぱい" in meeting.error
+    assert (runtime.audio.meeting_dir(1) / "元の録音.m4a").exists()
+
+
+def test_録音アプリに入れるWebDAVの設定を一覧に出す(env, monkeypatch) -> None:
+    from dataclasses import replace
+
+    from companion.config import get_config
+    from companion.web import minutes_routes
+
+    from companion.web import app as web_app
+
+    config = replace(get_config(), app_base_url="http://pc.example.ts.net:8765", webdav_user="recorder", webdav_password="pw-123")
+    monkeypatch.setattr(minutes_routes, "get_config", lambda: config)
+
+    from_iphone = TestClient(web_app.app, client=("100.65.177.94", 50000)).get("/minutes")
+    from_home_wifi = TestClient(web_app.app, client=("192.168.3.40", 50000)).get("/minutes")
+
+    assert "pc.example.ts.net/webdav" in from_iphone.text
+    assert "WebDAVで直接送る" in from_iphone.text
+    assert "pw-123" in from_iphone.text
+    # 家のWi-Fiの中のほかの機器には、パスワードを見せない
+    assert "pc.example.ts.net/webdav" in from_home_wifi.text
+    assert "pw-123" not in from_home_wifi.text
+
+
+def test_見張るフォルダもWebDAVも無ければ設定のしかたを案内する(env, monkeypatch) -> None:
+    from dataclasses import replace
+
+    from companion.config import get_config
+    from companion.web import minutes_routes
+
+    client, _, _ = env
+    config = replace(get_config(), webdav_password="", recorder_folder=None)
+    monkeypatch.setattr(minutes_routes, "get_config", lambda: config)
+
+    text = client.get("/minutes").text
+
+    assert "RECORDER_FOLDER" in text
+    assert "WebDAVで直接送る" not in text
+
+
+def test_見張っているフォルダを一覧に出す(env, monkeypatch) -> None:
+    from dataclasses import replace
+
+    from companion.config import get_config
+    from companion.web import minutes_routes
+
+    client, _, _ = env
+    config = replace(get_config(), recorder_folder=Path(r"G:\マイドライブ\Recorder Plus"))
+    monkeypatch.setattr(minutes_routes, "get_config", lambda: config)
+
+    response = client.get("/minutes")
+
+    assert r"G:\マイドライブ\Recorder Plus" in response.text
+    assert "Done, all in" in response.text

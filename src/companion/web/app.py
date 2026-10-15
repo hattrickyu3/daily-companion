@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date, time, timedelta
 from pathlib import Path
 
@@ -43,11 +45,13 @@ from companion.services.month_view import month_bounds, parse_month
 from companion.services.news import topic_label
 from companion.services.news_history import build as build_news_history
 from companion.services.schedule import get_events_for
+from companion.web.folder_watch import start_folder_watch
 from companion.web.mail_routes import action_items_for as mail_actions_for
 from companion.web.mail_routes import router as mail_router
 from companion.web.minutes_edit_routes import router as minutes_edit_router
 from companion.web.minutes_routes import router as minutes_router
 from companion.web.notes_routes import router as notes_router
+from companion.web.webdav_routes import router as webdav_router
 
 log = logging.getLogger(__name__)
 
@@ -57,11 +61,19 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-app = FastAPI(title="daily-companion", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # Recorder Plus からGoogleドライブ経由で届く録音の見張り（RECORDER_FOLDER が空なら何もしない）.
+    start_folder_watch()
+    yield
+
+
+app = FastAPI(title="daily-companion", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.include_router(notes_router)
 app.include_router(mail_router)
 app.include_router(minutes_router)
 app.include_router(minutes_edit_router)
+app.include_router(webdav_router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 

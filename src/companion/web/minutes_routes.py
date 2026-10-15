@@ -10,15 +10,20 @@ https://<PC名>.<tailnet>.ts.net/minutes で開く（tailscale serve で8765番�
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
+import os
 import re
 import shutil
 import threading
+import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -26,12 +31,15 @@ from markdown_it import MarkdownIt
 
 from companion.clock import now_local
 from companion.config import DIARIZATION_MODELS_DIR, get_config
+from companion.integrations.notify import send_notification
+from companion.links import app_url
 from companion.db import meetings as db
 from companion.db.connection import apply_schema, session
 from companion.integrations.diarization import Diarizer
 from companion.integrations.whisper import Transcriber
 from companion.services.minutes_audio import AudioError, AudioStore
 from companion.services.minutes_draft import SECTIONS, normalize_draft, section_label
+from companion.services.minutes_import import MAX_IMPORT_SEC, decode_chunks, probe_duration_ms, repair_caf
 from companion.services.minutes_runtime import M4A_NAME, MinutesRuntime
 from companion.services.minutes_speakers import parse_participants
 
@@ -48,6 +56,19 @@ MAX_PARTICIPANTS_LENGTH = 200
 KEEPALIVE_SEC = 15
 # seg_id はiPhone側の時刻（エポックミリ秒）. 2001年〜2286年の範囲だけ受ける.
 SEG_ID_MIN, SEG_ID_MAX = 10**12, 10**13
+
+# ボイスメモなどの音声ファイルの取り込み. 届いたファイルはまずここに置き、読めるとわかってから会議のフォルダへ移す.
+INCOMING_DIR_NAME = "_取り込み中"
+ORIGINAL_NAME = "元の録音"
+MAX_IMPORT_BYTES = 1024**3  # ボイスメモの「ロスレス」でも4時間で1GBに届かない
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+# 拡張子はファイル名から取るが、保存先の名前に使うので英数字だけ受ける.
+AUDIO_SUFFIX = re.compile(r"\.[A-Za-z0-9]{1,8}")
+# ファイルの日時（録り終えた時刻）として受ける範囲. 未来は1日先まで（端末の時計のずれ）.
+FUTURE_SLACK = timedelta(days=1)
+
+# Tailscaleが機器に割り当てるアドレスの範囲.
+TAILNET_NETWORKS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 
 # 改行などの制御文字. 題名はファイル名とダウンロード名に使うので落とす.
 CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
@@ -79,9 +100,27 @@ def _build_runtime() -> MinutesRuntime:
         diarizer=Diarizer(DIARIZATION_MODELS_DIR),
         tz=config.timezone,
         minutes_dir=config.minutes_dir,
+        recordings_dir=config.recordings_dir,
     )
+    runtime.set_notifier(_notify_minutes)
     runtime.start()
     return runtime
+
+
+def _notify_minutes(meeting_id: int | None, status: str, error: str | None) -> None:
+    """録音アプリから自動で届いた録音の議事録ができたら（できなかったら）iPhoneに知らせる."""
+    if meeting_id is None:
+        send_notification(error or "録音を議事録にできませんでした。", title="録音を議事録にできませんでした",
+                          tags=["warning"], click_url=app_url("/minutes"))
+        return
+    with session() as conn:
+        meeting = db.get_meeting(conn, meeting_id)
+    name = f"{meeting.started_at:%m/%d %H:%M}の「{meeting.title}」" if meeting else "録音"
+    if status == db.DONE:
+        message, title, tags = f"{name}の議事録ができました。", "議事録ができました", ["memo"]
+    else:
+        message, title, tags = f"{name}の議事録に確認が必要です。\n{error or ''}", "議事録を確認してください", ["warning"]
+    send_notification(message, title=title, tags=tags, click_url=app_url(f"/minutes/{meeting_id}"))
 
 
 def _load_meeting(meeting_id: int) -> db.Meeting:
@@ -167,14 +206,49 @@ def _clean_participants(raw: str) -> str:
     return "、".join(parse_participants(CONTROL_CHARS.sub(" ", raw)[:MAX_PARTICIPANTS_LENGTH]))
 
 
+def _clean_title(raw: str) -> str:
+    return CONTROL_CHARS.sub("", raw).strip()[:MAX_TITLE_LENGTH] or DEFAULT_TITLE
+
+
 @router.get("", response_class=HTMLResponse)
 def minutes_page(request: Request) -> HTMLResponse:
+    return _list_page(request)
+
+
+def _webdav_info(request: Request) -> dict[str, str | None] | None:
+    """録音アプリ（Recorder Plus）のWebDAVの設定に入れるもの. 受け口が閉じていれば None.
+
+    この画面は家のWi-Fiの中からも開けるので、パスワードは本人の機器（このPCとTailscaleの中）にだけ見せる。
+    """
+    config = get_config()
+    if not config.webdav_password:
+        return None
+    # iPhoneからは Tailscale の https（tailscale serve で8765番へ流している）で届く.
+    host = urlsplit(config.app_base_url).hostname or "（Tailscaleのhttpsのアドレス）"
+    client = request.client.host if request.client else ""
+    password = config.webdav_password if _is_own_device(client) else None
+    return {"host": f"{host}/webdav", "user": config.webdav_user, "password": password}
+
+
+def _is_own_device(host: str) -> bool:
+    """このPC自身か、Tailscaleの中（本人の機器だけがつながる）からのアクセスか."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or any(address in network for network in TAILNET_NETWORKS)
+
+
+def _list_page(request: Request, *, import_error: str | None = None, status_code: int = 200) -> HTMLResponse:
     store = get_runtime().audio  # テーブルをそろえるため、一覧を読む前に動かす
     with session() as conn:
         meetings = db.list_meetings(conn)
     return templates.TemplateResponse(
         request, "minutes.html",
         {
+            "import_error": import_error,
+            "webdav": _webdav_info(request),
+            "recorder_folder": get_config().recorder_folder,
             "rows": [
                 {
                     "meeting": m,
@@ -187,18 +261,108 @@ def minutes_page(request: Request) -> HTMLResponse:
             "default_title": DEFAULT_TITLE,
             "minutes_dir": get_config().minutes_dir,
         },
+        status_code=status_code,
     )
 
 
 @router.post("")
 def create_meeting(title: str = Form(DEFAULT_TITLE), participants: str = Form("")) -> RedirectResponse:
     get_runtime()
-    cleaned = CONTROL_CHARS.sub("", title).strip()[:MAX_TITLE_LENGTH] or DEFAULT_TITLE
     with session() as conn:
         meeting_id = db.create_meeting(
-            conn, cleaned, now_local(), participants=_clean_participants(participants)
+            conn, _clean_title(title), now_local(), participants=_clean_participants(participants)
         )
     return RedirectResponse(f"/minutes/{meeting_id}", status_code=303)
+
+
+@router.post("/import", response_model=None)
+async def import_recording(
+    request: Request,
+    audio: UploadFile = File(...),
+    title: str = Form(DEFAULT_TITLE),
+    participants: str = Form(""),
+    recorded_at: int = Form(0),
+) -> HTMLResponse | RedirectResponse:
+    """ボイスメモなどの録り終えた音声ファイルから議事録を作る.
+
+    recorded_at はファイルの日時（エポックミリ秒. 画面のスクリプトが入れる）。ボイスメモでは録り終えた時刻なので、
+    録音の長さの分だけさかのぼった時刻を会議の始まりにする。読めないファイルなら会議は作らず、一覧に理由を出す。
+    """
+    runtime = await run_in_threadpool(get_runtime)
+    suffix = audio.filename and Path(audio.filename).suffix
+    suffix = suffix.lower() if suffix and AUDIO_SUFFIX.fullmatch(suffix) else ".audio"
+    staging = runtime.audio.root / INCOMING_DIR_NAME / f"{uuid.uuid4().hex}{suffix}"
+    try:
+        await run_in_threadpool(_save_upload, audio, staging)
+        await run_in_threadpool(repair_caf, staging)
+        duration_ms = await run_in_threadpool(probe_duration_ms, staging)
+        if duration_ms > MAX_IMPORT_SEC * 1000:
+            raise AudioError(f"{MAX_IMPORT_SEC // 3600}時間より長い録音は送れません。")
+    except AudioError as exc:
+        staging.unlink(missing_ok=True)
+        return await run_in_threadpool(_list_page, request, import_error=str(exc), status_code=400)
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
+    meeting_id = await run_in_threadpool(
+        start_imported, runtime, staging,
+        title=_clean_title(title), participants=_clean_participants(participants),
+        start=_recording_start(recorded_at, duration_ms), duration_ms=duration_ms,
+    )
+    return RedirectResponse(f"/minutes/{meeting_id}", status_code=303)
+
+
+def _save_upload(upload: UploadFile, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    try:
+        with target.open("wb") as out:
+            while chunk := upload.file.read(UPLOAD_CHUNK_BYTES):
+                written += len(chunk)
+                if written > MAX_IMPORT_BYTES:
+                    raise AudioError(f"ファイルが大きすぎます（{MAX_IMPORT_BYTES // 1024**3}GBまで）。")
+                out.write(chunk)
+    except OSError as exc:
+        raise AudioError(f"ファイルを保存できませんでした: {exc}") from exc
+
+
+def _recording_start(recorded_at_ms: int, duration_ms: int) -> datetime:
+    """録音の始まり. ファイルの日時がおかしければ、いま録り終えたものとみなす."""
+    now = now_local()
+    end = now
+    if SEG_ID_MIN <= recorded_at_ms <= (now + FUTURE_SLACK).timestamp() * 1000:
+        end = datetime.fromtimestamp(recorded_at_ms / 1000, now.tzinfo)
+    return end - timedelta(milliseconds=duration_ms)
+
+
+def start_imported(
+    runtime: MinutesRuntime, staging: Path, *, title: str, participants: str, start: datetime, duration_ms: int,
+    notify: bool = False,
+) -> int:
+    """会議を作り、元のファイルを会議のフォルダへ移して取り込む. 会議の id を返す.
+
+    notify が True なら、清書が終わったとき（取り込めなかったときも）iPhoneに知らせる。
+    """
+    with session() as conn:
+        meeting_id = db.create_meeting(conn, title, start, participants=participants)
+        db.set_ended(conn, meeting_id, start + timedelta(milliseconds=duration_ms))
+        # 取り込んでいる間に「止めて清書する」を押されたり、録音中として編集係が動いたりしないよう、はじめから清書中にする.
+        db.set_status(conn, meeting_id, db.FINISHING)
+    try:
+        original = runtime.audio.meeting_dir(meeting_id) / f"{ORIGINAL_NAME}{staging.suffix}"
+        original.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(staging, original)
+        runtime.import_recording(meeting_id, decode_chunks(original), int(start.timestamp() * 1000), notify=notify)
+    except Exception as exc:  # noqa: BLE001 - 状態を「失敗」にしないと清書中のまま固まる
+        log.exception("importing audio for meeting %s failed", meeting_id)
+        # 会議のフォルダへ移せずに失敗したときは、staging が唯一の写しなので消さない.
+        reason = str(exc) if isinstance(exc, AudioError) else f"取り込みの途中でエラーが起きました: {exc}"
+        error = f"音声を読み込めませんでした: {reason}"
+        with session() as conn:
+            db.set_status(conn, meeting_id, db.FAILED, error=error)
+        if notify:
+            runtime.notify(meeting_id, db.FAILED, error)
+    return meeting_id
 
 
 @router.get("/{meeting_id}", response_class=HTMLResponse)
