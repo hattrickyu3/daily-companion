@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from web_client import own_device_client
 
 from companion.db import meetings as db
 from companion.db.connection import apply_schema, session
@@ -46,7 +47,7 @@ def env(tmp_path: Path, monkeypatch) -> Iterator[tuple[TestClient, Path, object,
     )
     monkeypatch.setattr(webdav_routes, "_scanned", True)
 
-    with TestClient(web_app.app) as client:
+    with own_device_client(web_app.app) as client:
         yield client, db_path, runtime, inbox, notified
 
 

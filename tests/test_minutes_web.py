@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from web_client import own_device_client
 
 from companion.db import meetings as db
 from companion.db.connection import apply_schema, session
@@ -26,7 +27,7 @@ def env(tmp_path: Path, monkeypatch) -> Iterator[tuple[TestClient, Path, object]
     monkeypatch.setattr(minutes_routes, "session", lambda: session(db_path))
     monkeypatch.setattr(minutes_routes, "get_runtime", lambda: runtime)
 
-    with TestClient(web_app.app) as client:
+    with own_device_client(web_app.app) as client:
         yield client, db_path, runtime
 
 
@@ -218,7 +219,7 @@ def test_再起動の直後に会議の画面をいきなり開いても足り�
     monkeypatch.setattr(minutes_routes, "_runtime", None)
     monkeypatch.setattr(minutes_routes, "_build_runtime", build_runtime)
 
-    with TestClient(web_app.app) as client:
+    with own_device_client(web_app.app) as client:
         assert client.get("/minutes/1").status_code == 200
         assert client.get("/minutes/1/edit", follow_redirects=False).status_code == 303
 
@@ -315,14 +316,14 @@ def test_録音アプリに入れるWebDAVの設定を一覧に出す(env, monke
     config = replace(get_config(), app_base_url="http://pc.example.ts.net:8765", webdav_user="recorder", webdav_password="pw-123")
     monkeypatch.setattr(minutes_routes, "get_config", lambda: config)
 
-    from_iphone = TestClient(web_app.app, client=("100.65.177.94", 50000)).get("/minutes")
-    from_home_wifi = TestClient(web_app.app, client=("192.168.3.40", 50000)).get("/minutes")
+    from_iphone = own_device_client(web_app.app, client=("100.65.177.94", 50000)).get("/minutes")
+    from_home_wifi = own_device_client(web_app.app, client=("192.168.3.40", 50000)).get("/minutes")
 
     assert "pc.example.ts.net/webdav" in from_iphone.text
     assert "WebDAVで直接送る" in from_iphone.text
     assert "pw-123" in from_iphone.text
-    # 家のWi-Fiの中のほかの機器には、パスワードを見せない
-    assert "pc.example.ts.net/webdav" in from_home_wifi.text
+    # 家のWi-Fiの中のほかの機器には、画面ごと見せない
+    assert from_home_wifi.status_code == 403
     assert "pw-123" not in from_home_wifi.text
 
 
@@ -356,3 +357,45 @@ def test_見張っているフォルダを一覧に出す(env, monkeypatch) -> N
 
     assert r"G:\マイドライブ\Recorder Plus" in response.text
     assert "Done, all in" in response.text
+
+
+def test_議事録の通知に会議の題名やエラーの中身を載せない(env, monkeypatch) -> None:
+    # Arrange: 通知は外のサーバー（ntfy.sh）を通るので、題名は画面で読ませる
+    from companion.web import minutes_routes
+
+    client, _, _ = env
+    client.post("/minutes", data={"title": "A社の最終面接"})
+    sent: list[dict] = []
+    monkeypatch.setattr(minutes_routes, "send_notification", lambda body, **kwargs: sent.append({"body": body, **kwargs}))
+
+    # Act
+    minutes_routes._notify_minutes(1, db.DONE, None)
+    minutes_routes._notify_minutes(1, db.FAILED, "C:/Users/me/録音/A社.m4a を読めません")
+    minutes_routes._notify_minutes(None, db.FAILED, "C:/Users/me/録音/A社.m4a を読めません")
+
+    # Assert
+    assert len(sent) == 3
+    for notification in sent:
+        assert "A社" not in notification["body"]
+    assert sent[0]["click_url"].endswith("/minutes/1")
+
+
+def test_大きすぎる切れ端は読み切る前に断る(env, monkeypatch) -> None:
+    # Arrange: 上限を超えた分までメモリに溜めないよう、届く途中で打ち切る
+    from companion.web import minutes_routes
+
+    client, db_path, _ = env
+    client.post("/minutes", data={"title": "ゼミ"})
+    monkeypatch.setattr(minutes_routes, "MAX_SEGMENT_BYTES", 1024)
+
+    def chunks():
+        for _ in range(64):
+            yield b"\0" * 1024
+
+    # Act
+    response = client.post(f"/minutes/1/segments?seg={SEG}", content=chunks())
+
+    # Assert
+    assert response.status_code == 413
+    with session(db_path) as conn:
+        assert db.list_segments(conn, 1) == []

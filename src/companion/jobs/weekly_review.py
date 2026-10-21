@@ -32,8 +32,9 @@ def run() -> str:
             return "今週は日記がないため作成せず"
         save_review(conn, start, body)
 
+    # 本文は日記から作ったものなので、外のサーバー（ntfy.sh）を通る通知には載せない.
     send_notification(
-        body,
+        "今週の振り返りができました。タップして読めます。",
         title="今週の振り返り",
         priority=PRIORITY_DEFAULT,
         tags=["books"],

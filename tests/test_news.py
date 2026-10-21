@@ -295,15 +295,18 @@ def test_ジャンルが違えば別々に保存される(conn) -> None:
 
 def test_通知にニュースの見出しを添える() -> None:
     # Act
-    message = morning_brief.build_notification("今日はゼミが10時から。", ["記事A", "記事B"])
+    message = morning_brief.build_notification(["記事A", "記事B"])
 
     # Assert
-    assert "今日はゼミが10時から。" in message
     assert "・記事A" in message
 
 
-def test_ニュースがなければ通知は本文だけ() -> None:
-    assert morning_brief.build_notification("今日は予定なし。", []) == "今日は予定なし。"
+def test_通知に日記や予定の中身は載せない() -> None:
+    # Arrange: 通知は外のサーバー（ntfy.sh）を通るので、まとめの本文はWebで読ませる
+    message = morning_brief.build_notification([])
+
+    # Assert
+    assert message == morning_brief.READY_MESSAGE
 
 
 def test_見出しは上限までしか載せない() -> None:
@@ -311,7 +314,7 @@ def test_見出しは上限までしか載せない() -> None:
     headlines = [f"記事{i}" for i in range(10)]
 
     # Act
-    message = morning_brief.build_notification("本文", headlines)
+    message = morning_brief.build_notification(headlines)
 
     # Assert
     assert message.count("・") == morning_brief.MAX_HEADLINES

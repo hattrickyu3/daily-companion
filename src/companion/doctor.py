@@ -126,7 +126,8 @@ def _check_notify() -> CheckResult:
         )
     except NotifyError as exc:
         return CheckResult("通知 (ntfy)", NG, str(exc))
-    return CheckResult("通知 (ntfy)", OK, f"topic={config.ntfy_topic} に送信しました")
+    # トピック名は知っていれば誰でも通知を読める秘密なので、画面にも出さない.
+    return CheckResult("通知 (ntfy)", OK, "送信しました")
 
 
 def _check_calendar() -> CheckResult:

@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 JOB_NAME = "morning_brief"
 PRIORITY_DEFAULT = 3
 MAX_HEADLINES = 3
+READY_MESSAGE = "今日のまとめができました。タップして開けます。"
 
 
 
@@ -55,11 +56,14 @@ def collect_news_safely(day) -> str:
         return "ニュース収集に失敗"
 
 
-def build_notification(body: str, headlines: list[str]) -> str:
-    """通知本文を組み立てる. 見出しだけ添え、本文はWebで読ませる."""
+def build_notification(headlines: list[str]) -> str:
+    """通知本文を組み立てる. まとめの本文（日記や予定の中身）は載せず、Webで読ませる.
+
+    ニュースの見出しは公開されている記事の題名なので、目を引くよう添える。
+    """
     if not headlines:
-        return body
-    lines = [body, "", "ニュース:"]
+        return READY_MESSAGE
+    lines = [READY_MESSAGE, "", "ニュース:"]
     lines += [f"・{headline}" for headline in headlines[:MAX_HEADLINES]]
     return "\n".join(lines)
 
@@ -90,7 +94,7 @@ def run() -> str:
         headlines = collect_headlines(conn, day)
 
     send_notification(
-        build_notification(body, headlines),
+        build_notification(headlines),
         title="おはようございます",
         priority=PRIORITY_DEFAULT,
         tags=["sunrise"],

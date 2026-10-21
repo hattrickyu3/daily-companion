@@ -160,3 +160,25 @@ def test_一覧は新しい週から返る(conn) -> None:
 
     # Act / Assert
     assert [r.body for r in list_reviews(conn)] == ["今週", "先週"]
+
+
+def test_通知には振り返りの本文を載せない(monkeypatch) -> None:
+    # Arrange: 通知は外のサーバー（ntfy.sh）を通るので、日記から作った本文はWebで読ませる
+    from contextlib import nullcontext
+
+    from companion.jobs import weekly_review as job
+
+    sent: list[dict] = []
+    monkeypatch.setattr(job, "session", lambda: nullcontext(None))
+    monkeypatch.setattr(job, "today_local", lambda: MONDAY)
+    monkeypatch.setattr(job, "generate", lambda conn, start: "今週は就活の面接が3つあった。")
+    monkeypatch.setattr(job, "save_review", lambda conn, start, body: None)
+    monkeypatch.setattr(job, "app_url", lambda path="/": "http://test" + path)
+    monkeypatch.setattr(job, "send_notification", lambda body, **kwargs: sent.append({"body": body, **kwargs}))
+
+    # Act
+    job.run()
+
+    # Assert
+    assert "面接" not in sent[0]["body"]
+    assert sent[0]["click_url"] == "http://test/reviews"

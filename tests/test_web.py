@@ -11,6 +11,7 @@ from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
+from web_client import own_device_client
 
 from companion.db.connection import apply_schema, session
 
@@ -30,7 +31,7 @@ def client(tmp_path, monkeypatch) -> Iterator[TestClient]:
     monkeypatch.setattr(web_app, "today_local", lambda: TODAY)
     monkeypatch.setattr(web_app, "get_events_for", lambda day: [])
 
-    with TestClient(web_app.app) as test_client:
+    with own_device_client(web_app.app) as test_client:
         yield test_client
 
 

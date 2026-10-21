@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, time, timedelta
 
 import pytest
-from fastapi.testclient import TestClient
+from web_client import own_device_client
 
 from companion.db.connection import apply_schema, connect, session
 from companion.db.events import (
@@ -341,7 +341,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(web_app, "get_events_for", lambda day: [])
     monkeypatch.setattr(web_app, "register_event", lambda draft: created.append(draft) or "id1")
 
-    with TestClient(web_app.app) as test_client:
+    with own_device_client(web_app.app) as test_client:
         yield test_client, created
 
 

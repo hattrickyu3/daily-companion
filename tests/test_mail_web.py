@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from web_client import own_device_client
 
 from companion.db.connection import apply_schema, session
 from companion.services.mail_inbox import load
@@ -47,7 +48,7 @@ def client(tmp_path, results_file, monkeypatch) -> Iterator[TestClient]:
     monkeypatch.setattr(mail_routes, "get_inbox", lambda: load(results_file))
     monkeypatch.setattr(mail_routes, "today_local", lambda: TODAY)
 
-    with TestClient(web_app.app) as test_client:
+    with own_device_client(web_app.app) as test_client:
         yield test_client
 
 

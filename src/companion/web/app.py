@@ -45,6 +45,7 @@ from companion.services.month_view import month_bounds, parse_month
 from companion.services.news import topic_label
 from companion.services.news_history import build as build_news_history
 from companion.services.schedule import get_events_for
+from companion.web.access import OwnDeviceOnlyMiddleware
 from companion.web.folder_watch import start_folder_watch
 from companion.web.mail_routes import action_items_for as mail_actions_for
 from companion.web.mail_routes import router as mail_router
@@ -69,6 +70,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="daily-companion", docs_url=None, redoc_url=None, lifespan=lifespan)
+# ログインが無いぶん、届いてよい相手をこのPCとTailscaleの中に絞る（家のWi-Fiのほかの機器からは開けない）.
+app.add_middleware(OwnDeviceOnlyMiddleware)
 app.include_router(notes_router)
 app.include_router(mail_router)
 app.include_router(minutes_router)

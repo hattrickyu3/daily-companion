@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from web_client import own_device_client
 
 from companion.db import meetings as db
 from companion.db.connection import apply_schema, session
@@ -58,7 +59,7 @@ def finished(tmp_path: Path, monkeypatch) -> Iterator[tuple[TestClient, Path, ob
     monkeypatch.setattr(minutes_routes, "session", lambda: session(db_path))
     monkeypatch.setattr(minutes_routes, "get_runtime", lambda: runtime)
 
-    with TestClient(web_app.app) as client:
+    with own_device_client(web_app.app) as client:
         client.post("/minutes", data={"title": "ゼミ"})
         client.post(f"/minutes/1/segments?seg={SEG}", content=make_wav())
         client.post("/minutes/1/finish")
@@ -139,7 +140,7 @@ def test_録音中の会議は直す画面を開けない(tmp_path, monkeypatch)
         apply_schema(conn)
     monkeypatch.setattr(minutes_routes, "session", lambda: session(db_path))
     monkeypatch.setattr(minutes_routes, "get_runtime", lambda: make_runtime(db_path, tmp_path, FakeTranscriber([])))
-    with TestClient(web_app.app) as client:
+    with own_device_client(web_app.app) as client:
         client.post("/minutes", data={"title": "ゼミ"})
 
         response = client.get("/minutes/1/edit", follow_redirects=False)

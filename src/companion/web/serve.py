@@ -28,7 +28,8 @@ def local_ip() -> str:
 def main() -> None:
     config = get_config()
     print(f"PCから      : http://localhost:{config.web_port}")
-    print(f"スマホから  : http://{local_ip()}:{config.web_port}")
+    # 家のWi-Fiの中のIPからは開けない（access で断る）. スマホはTailscale経由で開く.
+    print(f"スマホから  : {config.app_base_url or '.env の APP_BASE_URL（TailscaleのURL）を設定してください'}")
     print("停止するには Ctrl+C")
     uvicorn.run("companion.web.app:app", host=config.web_host, port=config.web_port)
 

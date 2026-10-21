@@ -19,10 +19,8 @@ from companion.db.repository import get_entry
 from companion.integrations.notify import send_notification
 from companion.jobs.base import run_job
 from companion.links import app_url
-from companion.services.schedule import get_events_for
 
 JOB_NAME = "evening_prompt"
-MAX_EVENTS_IN_MESSAGE = 5
 
 # ntfyの優先度は1〜5。1と2はバナーも音も出さずに配信されるため、
 # 気づいてほしい通知には必ず3以上を使う。
@@ -31,16 +29,11 @@ PRIORITY_DEFAULT = 3
 
 
 def build_prompt_message() -> tuple[str, str]:
-    """催促通知の (タイトル, 本文) を組み立てる."""
-    lines = ["今日は何をしましたか。ひとことでも大丈夫です。"]
+    """催促通知の (タイトル, 本文) を組み立てる.
 
-    events = get_events_for(today_local())
-    if events:
-        lines.append("")
-        lines.append("今日の予定:")
-        lines += [f"・{e.time_label()} {e.title}" for e in events[:MAX_EVENTS_IN_MESSAGE]]
-
-    return ("今日の振り返り", "\n".join(lines))
+    今日の予定は添えない。通知は外のサーバー（ntfy.sh）を通るので、予定の題名を載せたくない。
+    """
+    return ("今日の振り返り", "今日は何をしましたか。ひとことでも大丈夫です。")
 
 
 def send_prompt() -> None:

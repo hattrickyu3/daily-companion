@@ -10,7 +10,6 @@ https://<PC名>.<tailnet>.ts.net/minutes で開く（tailscale serve で8765番�
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 import logging
 import os
@@ -37,11 +36,12 @@ from companion.db import meetings as db
 from companion.db.connection import apply_schema, session
 from companion.integrations.diarization import Diarizer
 from companion.integrations.whisper import Transcriber
-from companion.services.minutes_audio import AudioError, AudioStore
+from companion.services.minutes_audio import MAX_SEGMENT_BYTES, AudioError, AudioStore
 from companion.services.minutes_draft import SECTIONS, normalize_draft, section_label
 from companion.services.minutes_import import MAX_IMPORT_SEC, decode_chunks, probe_duration_ms, repair_caf
 from companion.services.minutes_runtime import M4A_NAME, MinutesRuntime
 from companion.services.minutes_speakers import parse_participants
+from companion.web.access import is_own_device
 
 log = logging.getLogger(__name__)
 
@@ -66,9 +66,6 @@ UPLOAD_CHUNK_BYTES = 1024 * 1024
 AUDIO_SUFFIX = re.compile(r"\.[A-Za-z0-9]{1,8}")
 # ファイルの日時（録り終えた時刻）として受ける範囲. 未来は1日先まで（端末の時計のずれ）.
 FUTURE_SLACK = timedelta(days=1)
-
-# Tailscaleが機器に割り当てるアドレスの範囲.
-TAILNET_NETWORKS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 
 # 改行などの制御文字. 題名はファイル名とダウンロード名に使うので落とす.
 CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
@@ -108,18 +105,22 @@ def _build_runtime() -> MinutesRuntime:
 
 
 def _notify_minutes(meeting_id: int | None, status: str, error: str | None) -> None:
-    """録音アプリから自動で届いた録音の議事録ができたら（できなかったら）iPhoneに知らせる."""
+    """録音アプリから自動で届いた録音の議事録ができたら（できなかったら）iPhoneに知らせる.
+
+    通知は外のサーバー（ntfy.sh）を通るので、会議の題名やエラーの中身（ファイルの場所など）は載せない。
+    """
     if meeting_id is None:
-        send_notification(error or "録音を議事録にできませんでした。", title="録音を議事録にできませんでした",
+        log.warning("could not turn a recording into minutes: %s", error)
+        send_notification("録音を議事録にできませんでした。", title="録音を議事録にできませんでした",
                           tags=["warning"], click_url=app_url("/minutes"))
         return
     with session() as conn:
         meeting = db.get_meeting(conn, meeting_id)
-    name = f"{meeting.started_at:%m/%d %H:%M}の「{meeting.title}」" if meeting else "録音"
+    name = f"{meeting.started_at:%m/%d %H:%M}の会議" if meeting else "録音"
     if status == db.DONE:
         message, title, tags = f"{name}の議事録ができました。", "議事録ができました", ["memo"]
     else:
-        message, title, tags = f"{name}の議事録に確認が必要です。\n{error or ''}", "議事録を確認してください", ["warning"]
+        message, title, tags = f"{name}の議事録に確認が必要です。", "議事録を確認してください", ["warning"]
     send_notification(message, title=title, tags=tags, click_url=app_url(f"/minutes/{meeting_id}"))
 
 
@@ -218,7 +219,8 @@ def minutes_page(request: Request) -> HTMLResponse:
 def _webdav_info(request: Request) -> dict[str, str | None] | None:
     """録音アプリ（Recorder Plus）のWebDAVの設定に入れるもの. 受け口が閉じていれば None.
 
-    この画面は家のWi-Fiの中からも開けるので、パスワードは本人の機器（このPCとTailscaleの中）にだけ見せる。
+    パスワードは本人の機器（このPCとTailscaleの中）にだけ見せる。家のWi-Fiからは access で
+    もう断っているが、この画面を開ける相手が広がっても漏れないよう、ここでも確かめておく。
     """
     config = get_config()
     if not config.webdav_password:
@@ -226,17 +228,8 @@ def _webdav_info(request: Request) -> dict[str, str | None] | None:
     # iPhoneからは Tailscale の https（tailscale serve で8765番へ流している）で届く.
     host = urlsplit(config.app_base_url).hostname or "（Tailscaleのhttpsのアドレス）"
     client = request.client.host if request.client else ""
-    password = config.webdav_password if _is_own_device(client) else None
+    password = config.webdav_password if is_own_device(client) else None
     return {"host": f"{host}/webdav", "user": config.webdav_user, "password": password}
-
-
-def _is_own_device(host: str) -> bool:
-    """このPC自身か、Tailscaleの中（本人の機器だけがつながる）からのアクセスか."""
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return address.is_loopback or any(address in network for network in TAILNET_NETWORKS)
 
 
 def _list_page(request: Request, *, import_error: str | None = None, status_code: int = 200) -> HTMLResponse:
@@ -386,12 +379,24 @@ async def upload_segment(request: Request, meeting_id: int, seg: int) -> JSONRes
     if not SEG_ID_MIN <= seg < SEG_ID_MAX:
         return JSONResponse({"ok": False, "error": "切れ端の番号が不正です。"}, status_code=400)
     await run_in_threadpool(_load_meeting, meeting_id)
-    data = await request.body()
+    data = await _read_limited(request, MAX_SEGMENT_BYTES)
+    if data is None:
+        return JSONResponse({"ok": False, "error": "音声の切れ端が大きすぎます。"}, status_code=413)
     try:
         await run_in_threadpool(get_runtime().receive_segment, meeting_id, seg, data)
     except AudioError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     return JSONResponse({"ok": True})
+
+
+async def _read_limited(request: Request, limit: int) -> bytes | None:
+    """本文を limit バイトまで読む. 超えたらその場で読むのをやめて None を返す（メモリに溜め込まない）."""
+    received = bytearray()
+    async for chunk in request.stream():
+        received += chunk
+        if len(received) > limit:
+            return None
+    return bytes(received)
 
 
 @router.get("/{meeting_id}/events")

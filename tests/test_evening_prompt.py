@@ -19,7 +19,7 @@ TODAY = date(2026, 8, 8)
 
 @pytest.fixture
 def job(tmp_path, monkeypatch):
-    """DB・カレンダー・通知を差し替えたジョブモジュール."""
+    """DB・通知を差し替えたジョブモジュール."""
     db_path = tmp_path / "job.db"
     with session(db_path) as conn:
         apply_schema(conn)
@@ -28,7 +28,6 @@ def job(tmp_path, monkeypatch):
 
     monkeypatch.setattr(evening_prompt, "session", lambda: session(db_path))
     monkeypatch.setattr(evening_prompt, "today_local", lambda: TODAY)
-    monkeypatch.setattr(evening_prompt, "get_events_for", lambda day: [])
     monkeypatch.setattr(evening_prompt, "app_url", lambda path="/": "http://test/")
     monkeypatch.setattr(
         evening_prompt,
@@ -92,39 +91,12 @@ def test_通知はバナーが出る優先度で送られる(job) -> None:
     assert module.PRIORITY_DEFAULT >= 3
 
 
-def test_予定があれば本文に含める(job, monkeypatch) -> None:
-    # Arrange
+def test_予定の中身は通知に載せない(job, monkeypatch) -> None:
+    # Arrange: 通知は外のサーバー（ntfy.sh）を通るので、予定の題名は送らない
     module, _, sent = job
-
-    class FakeEvent:
-        title = "ゼミ"
-
-        def time_label(self) -> str:
-            return "10:00-11:30"
-
-    monkeypatch.setattr(module, "get_events_for", lambda day: [FakeEvent()])
 
     # Act
     module.run()
 
     # Assert
-    assert "10:00-11:30 ゼミ" in sent[0]["body"]
-
-
-def test_予定が多くても本文は上限までにする(job, monkeypatch) -> None:
-    # Arrange: 通知が長すぎると読まれない
-    module, _, sent = job
-
-    class FakeEvent:
-        title = "予定"
-
-        def time_label(self) -> str:
-            return "10:00"
-
-    monkeypatch.setattr(module, "get_events_for", lambda day: [FakeEvent()] * 20)
-
-    # Act
-    module.run()
-
-    # Assert
-    assert sent[0]["body"].count("・") == module.MAX_EVENTS_IN_MESSAGE
+    assert sent[0]["body"] == "今日は何をしましたか。ひとことでも大丈夫です。"

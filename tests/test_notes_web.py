@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
+from web_client import own_device_client
 
 from companion.services.notes import Vault
 
@@ -32,7 +33,7 @@ def client(vault_root, monkeypatch) -> Iterator[TestClient]:
     from companion.web import notes_routes
 
     monkeypatch.setattr(notes_routes, "get_vault", lambda: Vault(vault_root))
-    with TestClient(web_app.app) as test_client:
+    with own_device_client(web_app.app) as test_client:
         yield test_client
 
 
@@ -117,7 +118,7 @@ def test_保管庫が未設定なら設定方法を案内する(monkeypatch) -> 
     from companion.web import notes_routes
 
     monkeypatch.setattr(notes_routes, "get_vault", lambda: None)
-    with TestClient(web_app.app) as test_client:
+    with own_device_client(web_app.app) as test_client:
         response = test_client.get("/notes")
 
     assert response.status_code == 200

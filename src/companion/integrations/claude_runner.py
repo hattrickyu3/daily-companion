@@ -100,6 +100,10 @@ def run_claude(
         args += ["--append-system-prompt", system_prompt]
     if allowed_tools:
         args += ["--allowedTools", allowed_tools]
+    else:
+        # --allowedTools を付けないだけでは、許可の要らないツール（ファイルを読むRead等）が残る。
+        # ニュースの記事のような他人の文章に指示を仕込まれても、.env を読めないよう丸ごと外す。
+        args += ["--tools", ""]
 
     try:
         completed = subprocess.run(  # noqa: S603 - 引数は自前で組み立てており shell も使わない

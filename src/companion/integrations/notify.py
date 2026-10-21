@@ -1,7 +1,8 @@
 """ntfy.sh によるスマホPush通知.
 
 トピック名を知っていれば誰でも購読できる仕組みなので、
-トピック名そのものが実質的な秘密になる。.env 以外の場所に書かないこと。
+トピック名そのものが実質的な秘密になる。.env 以外の場所（ログを含む）に書かないこと。
+また通知は外のサーバーを通るので、日記・予定・会議の中身は載せず「できました」とリンクだけを送る。
 """
 
 from __future__ import annotations
@@ -69,4 +70,4 @@ def send_notification(
         log.error("ntfy send failed: %s", exc)
         raise NotifyError(f"通知の送信に失敗しました: {exc}") from exc
 
-    log.info("notification sent to topic %s", config.ntfy_topic)
+    log.info("notification sent")
