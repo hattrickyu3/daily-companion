@@ -20,7 +20,7 @@ from companion.integrations.claude_runner import ClaudeError
 from companion.integrations.whisper import TimedText, WhisperError, clean_text
 from companion.services.minutes_audio import AudioError, AudioStore
 from companion.services.minutes_editor import LiveEditor
-from companion.services.minutes_final import timed_lines
+from companion.services.minutes_final import texts_by_segment, timed_lines
 from companion.services.minutes_hub import MinutesHub
 from companion.services.minutes_runtime import MinutesRuntime
 from test_minutes_audio import make_wav
@@ -44,8 +44,9 @@ class FakeTranscriber:
         self.texts = texts
         self.prompts: list[str] = []
 
-    def transcribe(self, samples, *, prompt: str = "") -> str:
+    def transcribe(self, samples, *, prompt: str = "", hotwords: str | None = None) -> str:
         self.prompts.append(prompt)
+        self.hotwords = hotwords
         result = self.texts.pop(0) if self.texts else "続き"
         if isinstance(result, Exception):
             raise result
@@ -78,8 +79,9 @@ class FakeLongTranscriber:
         self.result = result
         self.calls = 0
 
-    def transcribe_long(self, samples) -> list[TimedText]:
+    def transcribe_long(self, samples, *, hotwords: str | None = None) -> list[TimedText]:
         self.calls += 1
+        self.hotwords = hotwords
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -94,6 +96,7 @@ def make_runtime(
         transcriber=transcriber,
         tz=TZ,
         minutes_dir=tmp_path / "vault" / "研究" / "ゼミ議事録",
+        notes_dir=tmp_path / "vault",
         recordings_dir=tmp_path / "録音",
         final_transcriber=final_transcriber,
         diarizer=diarizer,
@@ -529,3 +532,249 @@ def test_知らせてほしい取り込みは清書が終わったら知らせ�
 
     wait_until(lambda: meeting(db_path, quiet).status == "done" and meeting(db_path, loud).status == "done")
     wait_until(lambda: notified == [(loud, "done", None)])
+
+
+def test_通しの文字起こしを切れ端ごとに分ける() -> None:
+    offsets = [(0.0, SEG), (30.0, SEG + 40000)]
+    timed = [TimedText(0.0, 5.0, "始めます。"), TimedText(10.0, 20.0, "次へ。"), TimedText(31.0, 33.0, "以上です。")]
+
+    assert texts_by_segment(timed, offsets) == {SEG: "始めます。 次へ。", SEG + 40000: "以上です。"}
+
+
+def test_何も話していない切れ端は空の文字起こしにする() -> None:
+    offsets = [(0.0, SEG), (30.0, SEG + 30000)]
+
+    assert texts_by_segment([TimedText(1.0, 2.0, "はい")], offsets) == {SEG: "はい", SEG + 30000: ""}
+
+
+def test_届いた録音は切れ端ごとには文字起こしせず通しの結果を使う(db_path, tmp_path) -> None:
+    quick = FakeTranscriber(["雑な聞き取り"])
+    final = FakeLongTranscriber([TimedText(0.0, 5.0, "正確な前半"), TimedText(31.0, 33.0, "正確な後半")])
+    runtime = make_runtime(db_path, tmp_path, quick, final_transcriber=final)
+    meeting_id = new_meeting(db_path)
+
+    runtime.import_recording(meeting_id, [make_wav(30.0), make_wav(5.0)], SEG)
+
+    wait_until(lambda: meeting(db_path, meeting_id).status == "done")
+    # どうせ録音全体を文字にし直すので、録音中向けの速いモデルは使わない
+    assert quick.prompts == []
+    assert final.calls == 1
+    # 会議の画面の文字起こし欄には、通しで文字にした結果を入れる
+    assert [(s.status, s.text) for s in segments(db_path, meeting_id)] == [("done", "正確な前半"), ("done", "正確な後半")]
+
+
+def test_届いた録音を通しで文字にできなければ切れ端ごとに文字起こしする(db_path, tmp_path) -> None:
+    quick = FakeTranscriber(["前半", "後半"])
+    final = FakeLongTranscriber(WhisperError("VRAMが足りない"))
+    runtime = make_runtime(db_path, tmp_path, quick, final_transcriber=final)
+    meeting_id = new_meeting(db_path)
+
+    runtime.import_recording(meeting_id, [make_wav(30.0), make_wav(5.0)], SEG)
+
+    wait_until(lambda: meeting(db_path, meeting_id).status == "done")
+    assert [s.text for s in segments(db_path, meeting_id)] == ["前半", "後半"]
+    transcript = (tmp_path / "vault" / "研究" / "ゼミ議事録" / "2026-10-02 ゼミ 文字起こし.md").read_text(encoding="utf-8")
+    assert "後半" in transcript
+
+
+def test_起動し直したとき清書中の会議は切れ端ごとには文字起こししない(db_path, tmp_path) -> None:
+    meeting_id = new_meeting(db_path)
+    AudioStore(tmp_path / "audio").save_segment(meeting_id, SEG, make_wav())
+    with session(db_path) as conn:
+        db.add_segment(conn, meeting_id, SEG, 1000)
+        db.set_status(conn, meeting_id, db.FINISHING)  # 取り込んで清書している途中でアプリが落ちた状態
+    quick = FakeTranscriber(["雑な聞き取り"])
+    final = FakeLongTranscriber([TimedText(0.0, 0.5, "正確な聞き取り")])
+
+    make_runtime(db_path, tmp_path, quick, final_transcriber=final)
+
+    wait_until(lambda: meeting(db_path, meeting_id).status == "done")
+    assert quick.prompts == []
+    assert segments(db_path, meeting_id)[0].text == "正確な聞き取り"
+
+
+def _record_and_finish(runtime, db_path: Path, meeting_id: int) -> None:
+    runtime.receive_segment(meeting_id, SEG, make_wav())
+    wait_until(lambda: segments(db_path, meeting_id)[0].status == "done")
+    runtime.finish(meeting_id)
+    wait_until(lambda: meeting(db_path, meeting_id).status == "done")
+
+
+def test_授業の記録はその授業のフォルダに書き出し授業のまとめにつなぐ(db_path, tmp_path) -> None:
+    notes = tmp_path / "vault" / "3年３Q" / "自然言語処理" / "ノート"
+    notes.mkdir(parents=True)
+    (notes / "自然言語処理まとめ.md").write_text("# 自然言語処理まとめ\n", encoding="utf-8")
+    runtime = make_runtime(db_path, tmp_path, FakeTranscriber(["形態素解析の話"]))
+    with session(db_path) as conn:
+        meeting_id = db.create_meeting(conn, "自然言語処理", START, kind="lecture", course="3年３Q/自然言語処理")
+
+    _record_and_finish(runtime, db_path, meeting_id)
+
+    folder = tmp_path / "vault" / "3年３Q" / "自然言語処理" / "議事録"
+    note = (folder / "2026-10-02 自然言語処理.md").read_text(encoding="utf-8")
+    assert note.startswith("# 2026-10-02 自然言語処理\n← [[自然言語処理 議事録まとめ]]")
+    assert "- 場面：授業・自然言語処理" in note
+    assert "- 授業：[[自然言語処理まとめ]]" in note
+    assert "- [[2026-10-02 自然言語処理]]" in (folder / "自然言語処理 議事録まとめ.md").read_text(encoding="utf-8")
+    assert not (tmp_path / "vault" / "研究" / "ゼミ議事録").exists()
+
+
+def test_ひとりメモは保管庫のひとりメモのフォルダに書き出し声の聞き分けはしない(db_path, tmp_path) -> None:
+    diarizer = FakeDiarizer([])
+    final = FakeLongTranscriber([TimedText(start=0.0, end=0.4, text="考えていたこと")])
+    runtime = make_runtime(db_path, tmp_path, FakeTranscriber(["x"]), final_transcriber=final, diarizer=diarizer)
+    with session(db_path) as conn:
+        meeting_id = db.create_meeting(conn, "ひとりメモ", START, kind="solo")
+
+    _record_and_finish(runtime, db_path, meeting_id)
+
+    folder = tmp_path / "vault" / "_授業以外" / "ひとりメモ"
+    result = meeting(db_path, meeting_id)
+    assert result.note_path == str(folder / "2026-10-02 ひとりメモ.md")
+    assert "- 場面：ひとりメモ" in (folder / "2026-10-02 ひとりメモ.md").read_text(encoding="utf-8")
+    assert "- [[2026-10-02 ひとりメモ]]" in (folder / "ひとりメモまとめ.md").read_text(encoding="utf-8")
+    assert diarizer.num_speakers == "未呼び出し"
+
+
+def test_場面を変えて清書し直すと前の場所のノートを新しい場所へ移す(db_path, tmp_path) -> None:
+    runtime = make_runtime(db_path, tmp_path, FakeTranscriber(["話した"]))
+    meeting_id = new_meeting(db_path)
+    _record_and_finish(runtime, db_path, meeting_id)
+    seminar = tmp_path / "vault" / "研究" / "ゼミ議事録"
+    assert (seminar / "2026-10-02 ゼミ.md").exists()
+
+    with session(db_path) as conn:
+        db.set_scene(conn, meeting_id, "meeting", "")
+    runtime.finish(meeting_id)
+    wait_until(lambda: meeting(db_path, meeting_id).status == "done" and "打ち合わせ" in (meeting(db_path, meeting_id).note_path or ""))
+
+    moved = tmp_path / "vault" / "_授業以外" / "打ち合わせ"
+    assert (moved / "2026-10-02 ゼミ.md").exists()
+    assert (moved / "2026-10-02 ゼミ 文字起こし.md").exists()
+    assert not (seminar / "2026-10-02 ゼミ.md").exists()
+    assert not (seminar / "2026-10-02 ゼミ 文字起こし.md").exists()
+    assert "2026-10-02 ゼミ" not in (seminar / "ゼミ議事録まとめ.md").read_text(encoding="utf-8")
+
+
+def test_ひとりメモに変えるとひとりメモのフォルダへ移す(db_path, tmp_path) -> None:
+    runtime = make_runtime(db_path, tmp_path, FakeTranscriber(["話した"]))
+    meeting_id = new_meeting(db_path)
+    _record_and_finish(runtime, db_path, meeting_id)
+
+    with session(db_path) as conn:
+        db.set_scene(conn, meeting_id, "solo", "")
+    runtime.finish(meeting_id)
+    wait_until(lambda: meeting(db_path, meeting_id).status == "done" and "ひとりメモ" in (meeting(db_path, meeting_id).note_path or ""))
+
+    assert not (tmp_path / "vault" / "研究" / "ゼミ議事録" / "2026-10-02 ゼミ.md").exists()
+    assert (tmp_path / "vault" / "_授業以外" / "ひとりメモ" / "2026-10-02 ゼミ.md").exists()
+
+
+def test_保管庫に出していなかったひとりメモを清書し直さずに書き出す(db_path, tmp_path) -> None:
+    with session(db_path) as conn:
+        memo = db.create_meeting(conn, "進路のこと", START, kind="solo")
+        db.add_segment(conn, memo, SEG, 1500)
+        db.finish_segment(conn, memo, SEG, "考えていた")
+        db.save_final(conn, memo, "## 要点\n\n- 手で直した", None, polished=True)
+        db.set_status(conn, memo, db.DONE)
+        seminar = db.create_meeting(conn, "ゼミ", START)
+        db.save_final(conn, seminar, "## 要点\n\n- ゼミ", None, polished=True)
+        db.set_status(conn, seminar, db.DONE)
+    polished: list[str] = []
+
+    runtime = make_runtime(db_path, tmp_path, FakeTranscriber([]), polisher=lambda m, t: polished.append(t) or "x")
+
+    note = tmp_path / "vault" / "_授業以外" / "ひとりメモ" / "2026-10-02 進路のこと.md"
+    assert meeting(db_path, memo).note_path == str(note)
+    assert "- 手で直した" in note.read_text(encoding="utf-8")
+    assert "考えていた" in (note.parent / "2026-10-02 進路のこと 文字起こし.md").read_text(encoding="utf-8")
+    assert meeting(db_path, seminar).note_path is None  # ひとりメモ以外は触らない
+    assert polished == []
+    assert runtime.export_unwritten_memos() == 0  # 2回目は何もしない
+
+
+def test_音声入力の文字からひとりメモを作って清書する(db_path, tmp_path) -> None:
+    seen: list[str] = []
+    runtime = make_runtime(
+        db_path, tmp_path, FakeTranscriber([]),
+        polisher=lambda m, transcript: seen.append(transcript) or "## 要点\n\n- まとめた",
+    )
+
+    memo = runtime.create_text_memo([(SEG, 2000, "一つ目。"), (SEG + 3000, 1500, "二つ目。")], title="ひとりメモ 18時30分")
+    wait_until(lambda: meeting(db_path, memo).status == "done")
+
+    result = meeting(db_path, memo)
+    assert result.kind == "solo" and result.started_at == START
+    assert seen == ["[18:30:00] 一つ目。\n[18:30:03] 二つ目。"]
+    assert result.note_path and result.note_path.endswith("2026-10-02 ひとりメモ 18時30分.md")
+
+
+def test_辞書の語をヒントに渡しつなぎ言葉を消して間違いを直す(db_path, tmp_path) -> None:
+    from companion.db import words as words_db
+
+    with session(db_path) as conn:
+        words_db.save_word(conn, "田中", ("田名か",), "")
+        meeting_id = db.create_meeting(conn, "ゼミ", START, participants="自分、佐藤")
+    live = FakeTranscriber(["えーっと、田名かさんどうぞ"])
+    final = FakeLongTranscriber([TimedText(0.0, 0.4, "あのー田名かです"), TimedText(0.5, 0.9, "えー")])
+    seen: list[str] = []
+    runtime = make_runtime(
+        db_path, tmp_path, live, final_transcriber=final,
+        polisher=lambda meeting, transcript: seen.append(transcript) or "## 要点\n\n- x",
+    )
+
+    runtime.receive_segment(meeting_id, SEG, make_wav())
+    wait_until(lambda: segments(db_path, meeting_id)[0].status == "done")
+    runtime.finish(meeting_id)
+    wait_until(lambda: meeting(db_path, meeting_id).status == "done")
+
+    assert live.hotwords == "佐藤、田中"
+    assert final.hotwords is None
+    assert segments(db_path, meeting_id)[0].text == "田中さんどうぞ"
+    assert seen == ["[18:30:00] 田中です"]  # つなぎ言葉だけの区間は落ちる
+
+
+def test_既定の清書係には辞書の語を渡す(db_path, tmp_path, monkeypatch) -> None:
+    from companion.db import words as words_db
+    from companion.services import minutes_runtime
+
+    with session(db_path) as conn:
+        words_db.save_word(conn, "形態素解析", (), "")
+    received: list[tuple] = []
+    monkeypatch.setattr(minutes_runtime, "polish", lambda m, t, terms=(): received.append(terms) or "## 要点\n\n- x")
+    runtime = MinutesRuntime(
+        open_db=lambda: session(db_path), audio=AudioStore(tmp_path / "audio"), transcriber=FakeTranscriber(["話した"]),
+        tz=TZ, minutes_dir=None, editor_factory=lambda _id: FakeEditor(),
+    )
+    runtime.start()
+    meeting_id = new_meeting(db_path)
+
+    runtime.receive_segment(meeting_id, SEG, make_wav())
+    wait_until(lambda: segments(db_path, meeting_id)[0].status == "done")
+    runtime.finish(meeting_id)
+    wait_until(lambda: meeting(db_path, meeting_id).status == "done")
+
+    assert received == [("形態素解析",)]
+
+
+def test_止めたあとの文字起こしには辞書の語をヒントに渡さず直すのに使う(db_path, tmp_path) -> None:
+    # 2026-10-28: 正確なモデルに辞書の語を渡すと、語の一覧をそのまま書き出して講義の中身を落とした.
+    from companion.db import words as words_db
+
+    with session(db_path) as conn:
+        words_db.save_word(conn, "気仙沼", ("けせんぬま",), "")
+        meeting_id = db.create_meeting(conn, "ゼミ", START)
+    final = FakeLongTranscriber([TimedText(0.0, 0.4, "けせんぬまの話")])
+    seen: list[str] = []
+    runtime = make_runtime(
+        db_path, tmp_path, FakeTranscriber(["けせんぬまの話"]), final_transcriber=final,
+        polisher=lambda meeting, transcript: seen.append(transcript) or "## 要点\n\n- x",
+    )
+
+    runtime.receive_segment(meeting_id, SEG, make_wav())
+    wait_until(lambda: segments(db_path, meeting_id)[0].status == "done")
+    runtime.finish(meeting_id)
+    wait_until(lambda: meeting(db_path, meeting_id).status == "done")
+
+    assert final.hotwords is None
+    assert seen == ["[18:30:00] 気仙沼の話"]

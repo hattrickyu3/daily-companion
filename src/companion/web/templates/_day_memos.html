@@ -1,0 +1,19 @@
+{# 日記の詳細画面に出す「この日のひとりメモ」。無い日は出さない。 #}
+{% if memos %}
+<section class="card">
+  <div class="card-head">
+    <h2><i data-lucide="sticky-note"></i>この日のひとりメモ</h2>
+    <a class="btn btn-icon" href="/memos" aria-label="ひとりメモの一覧" title="ひとりメモの一覧"><i data-lucide="list"></i></a>
+  </div>
+  {% for row in memos %}
+  {% set m = row.meeting %}
+  <div{% if not loop.first %} style="margin-top:12px"{% endif %}>
+    <a href="/minutes/{{ m.id }}" style="font-weight:700">{{ m.started_at.strftime("%H:%M") }} {{ m.title }}</a>
+    {% if m.status != "done" %}<span class="tag">{{ "清書中" if m.status in ("recording", "finishing") else "要確認" }}</span>{% endif %}
+    {% if row.points %}
+    <ul class="list" style="margin-top:4px">{% for point in row.points %}<li>{{ point }}</li>{% endfor %}</ul>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}

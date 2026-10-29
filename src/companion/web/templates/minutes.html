@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_scene_fields.html" import scene_fields with context %}
 {% block title %}議事録 — daily-companion{% endblock %}
 
 {% block head %}
@@ -15,6 +16,10 @@
   table.meetings .btn-icon { padding: 0; width: 36px; height: 36px; color: var(--danger); }
   .row-ops { display: flex; gap: 6px; justify-content: flex-end; }
   .row-ops form { margin: 0; }
+  .filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; }
+  .filters > div { flex: 1 1 160px; min-width: 0; }
+  .filters > div.query { flex: 2 1 220px; }
+  .filters .filter-ops { display: flex; gap: 8px; flex: none; }
   /* スマホ幅ではボタンを縦に積み、名前と要点の欄を狭めない */
   @media (max-width: 767px) { .row-ops { flex-direction: column; align-items: flex-end; } }
 </style>
@@ -34,15 +39,19 @@
 <div class="page-head">
   <div>
     <h1>議事録</h1>
-    {% if rows %}<p class="page-sub">{{ rows|length }}件</p>{% endif %}
+    {% if rows or filtered %}<p class="page-sub">{% if filtered %}{{ rows|length }}件（全{{ total }}件）{% else %}{{ rows|length }}件{% endif %}</p>{% endif %}
+  </div>
+  <div class="actions">
+    <a class="btn" href="/minutes/words"><i data-lucide="book-a"></i>辞書{% if suggestion_count %}<span class="tag on">候補{{ suggestion_count }}</span>{% endif %}</a>
   </div>
 </div>
 
 <section class="card">
   <form method="post" action="/minutes">
     <div class="fields">
+      {{ scene_fields("new") }}
       <div>
-        <label for="title">会議の名前</label>
+        <label for="title">名前</label>
         <input type="text" id="title" name="title" value="{{ default_title }}" maxlength="60">
       </div>
       <div>
@@ -57,7 +66,10 @@
   </form>
   <p class="hint" style="margin-top:10px">
     iPhoneでは Tailscale の https のアドレス（https://〜.ts.net/minutes）で開いてください。http のままだとマイクが使えません。
-    {% if minutes_dir %}清書した議事録は「{{ minutes_dir }}」に保存します。{% else %}NOTES_DIR が未設定なので、議事録はこのアプリの中にだけ残ります。{% endif %}
+  </p>
+  <p class="hint" style="margin-top:6px">
+    {% if minutes_dir %}清書した記録の置き場所：ゼミは「{{ minutes_dir }}」、授業はその授業のフォルダの「議事録」、打ち合わせは保管庫の「_授業以外\打ち合わせ」。{% else %}NOTES_DIR が未設定なので、記録はこのアプリの中にだけ残ります。{% endif %}
+    ひとりメモは<a href="/memos">ひとりメモ</a>の画面に分けました（保管庫の「_授業以外\ひとりメモ」にも置きます）。
   </p>
 </section>
 
@@ -66,15 +78,16 @@
   {% if import_error %}<div class="notice error"><i data-lucide="alert-triangle"></i><p>{{ import_error }}</p></div>{% endif %}
   <form method="post" action="/minutes/import" enctype="multipart/form-data" id="import-form">
     <div class="fields">
+      {{ scene_fields("import") }}
       <div>
-        <label for="import-title">会議の名前</label>
+        <label for="import-title">名前</label>
         <input type="text" id="import-title" name="title" value="{{ default_title }}" maxlength="60">
       </div>
       <div>
         <label for="import-participants">参加者（任意）</label>
         <input type="text" id="import-participants" name="participants" maxlength="200" placeholder="例: 自分、田中、佐藤、先生">
       </div>
-      <div>
+      <div class="wide">
         <label for="import-audio">録音ファイル</label>
         <input type="file" id="import-audio" name="audio" accept="audio/*,.m4a,.mp3,.wav,.aac" required>
       </div>
@@ -89,7 +102,7 @@
 <section class="card" style="margin-top:14px">
   <h2>録音アプリから自動で送る</h2>
   {% if recorder_folder %}
-  <p class="hint">Recorder Plus の自動バックアップ先を Google Drive にしておくと、録音がこのPCの「{{ recorder_folder }}」に届きます。1分ごとに見て議事録にし、できたらiPhoneに通知します。議事録にした録音はフォルダから消します（Googleドライブのごみ箱に入り、元の録音はこのアプリの中に残ります）。</p>
+  <p class="hint">Recorder Plus の自動バックアップ先を Google Drive にしておくと、録音がこのPCの「{{ recorder_folder }}」に届きます。1分ごとに見て議事録にし、できたらiPhoneに通知します。自動で届いた録音はゼミとして作るので、ほかの場面なら会議の画面で場面を変えて「清書をやり直す」を押してください。議事録にした録音はフォルダから消します（Googleドライブのごみ箱に入り、元の録音はこのアプリの中に残ります）。</p>
   <p class="hint" style="margin-top:6px">Recorder Plus はアプリを開いている間（録音中・画面に出している間）に、Wi-Fiのときだけ送ります。録音を止めたら、画面の下が「Done, all in …」になるまで開いておいてください。</p>
   {% else %}
   <p class="hint">.env の RECORDER_FOLDER に、Googleドライブ パソコン版で Recorder Plus の録音が入るフォルダを書いてアプリを起動し直すと、届いた録音を自動で議事録にします。</p>
@@ -127,6 +140,40 @@
     });
   })();
 </script>
+<script src="/static/minutes/scene_fields.js"></script>
+
+{% if total %}
+<section class="card" style="margin-top:14px">
+  <form method="get" action="/minutes" class="filters">
+    <div>
+      <label for="filter-kind">場面</label>
+      <select id="filter-kind" name="kind" onchange="const row = document.getElementById('filter-course-row'); row.hidden = this.value !== '{{ lecture_kind }}'; if (row.hidden) document.getElementById('filter-course').value = ''">
+        <option value="">すべて</option>
+        {% for key, label, _ in scenes %}<option value="{{ key }}"{% if key == filters.kind %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div id="filter-course-row" {% if filters.kind != lecture_kind %}hidden{% endif %}>
+      <label for="filter-course">授業</label>
+      <select id="filter-course" name="course">
+        <option value="">すべての授業</option>
+        {% for c in courses %}<option value="{{ c.path }}"{% if c.path == filters.course %} selected{% endif %}>{{ c.label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="query">
+      <label for="filter-q">言葉で探す</label>
+      <input type="search" id="filter-q" name="q" value="{{ filters.q }}" maxlength="100" placeholder="題名・参加者・議事録の中身">
+    </div>
+    <div class="filter-ops">
+      <button class="btn" type="submit"><i data-lucide="search"></i>絞り込む</button>
+      {% if filtered %}<a class="btn" href="/minutes"><i data-lucide="x"></i>解除</a>{% endif %}
+    </div>
+  </form>
+</section>
+{% endif %}
+
+{% if filtered and not rows %}
+<p class="empty" style="margin-top:14px">条件に合う記録はありません。</p>
+{% endif %}
 
 {% if rows %}
 <div class="table-wrap" style="margin-top:14px">
@@ -138,6 +185,7 @@
       <tr>
         <td class="name">
           <a class="meeting-link" href="/minutes/{{ m.id }}">{{ m.title }}</a>
+          {% if row.scene %}<span class="tag">{{ row.scene }}</span>{% endif %}
           <span class="tag{% if m.status == 'done' %} ok{% elif m.status == 'failed' %} ng{% endif %}">{{ labels.get(m.status, m.status) }}</span>
           {% if row.summary %}<small>{{ row.summary }}</small>{% endif %}
         </td>

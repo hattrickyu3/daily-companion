@@ -234,7 +234,7 @@ function makeSegmenter(onSegment, onLevel) {
     const all = new Float32Array(length);
     let offset = 0;
     chunks.forEach((c) => { all.set(c, offset); offset += c.length; });
-    onSegment(startMs, all);
+    onSegment(startMs, all, hasSpeech);
     chunks = []; length = 0; hasSpeech = false; silentFrames = 0;
   }
 
@@ -281,7 +281,9 @@ function makeSegmenter(onSegment, onLevel) {
 // 2026-10-03 に実際の環境で録り比べたら、使った方が文字起こしが良かったので既定は使う。
 // systemAudio: PCのオンライン会議用。相手の声（PCで鳴っている音）を画面共有の仕組みで取り込み、
 // 自分のマイクの声と混ぜて1本にする。PCのChrome・Edgeで使える（iPhoneでは使えない）。
-function createRecorder(meetingId, { onLevel, onInterrupted, noiseSuppression = true, systemAudio = false }) {
+// onSegment: 切れ端をiPhoneの中に控えてPCへ送る代わりに、自分で扱う（音声入力の画面）。
+//   (話し始めのエポックミリ秒, 16kHzのWAV, 長さミリ秒, 声が入っていたか) で呼ぶ。
+function createRecorder(meetingId, { onLevel, onInterrupted, onSegment = null, noiseSuppression = true, systemAudio = false }) {
   let ctx = null;
   let stream = null;
   let display = null;
@@ -291,9 +293,13 @@ function createRecorder(meetingId, { onLevel, onInterrupted, noiseSuppression = 
 
   const saving = new Set(); // 保存の途中のもの。止めるときに待つ
 
-  function saveSegment(startMs, samples) {
+  function saveSegment(startMs, samples, hasSpeech) {
     const segId = Math.max(startMs, lastSegId + 1);
     lastSegId = segId;
+    if (onSegment) {
+      onSegment(segId, toWav(samples), Math.round((samples.length / RATE) * 1000), hasSpeech);
+      return;
+    }
     const item = { key: `${meetingId}:${segId}`, meetingId, segId, wav: toWav(samples), createdAt: Date.now() };
     // Store.put は失敗してもメモリに残すので、ここで切れ端が消えることはない
     const job = Store.put(item).then(() => Uploader.kick(), () => Uploader.kick());
@@ -323,7 +329,7 @@ function createRecorder(meetingId, { onLevel, onInterrupted, noiseSuppression = 
     const source = ctx.createMediaStreamSource(stream);
     node = new AudioWorkletNode(ctx, "capture-processor");
     const resample = makeResampler(ctx.sampleRate);
-    segmenter = makeSegmenter((s, samples) => saveSegment(s, samples), onLevel);
+    segmenter = makeSegmenter((s, samples, hasSpeech) => saveSegment(s, samples, hasSpeech), onLevel);
     node.port.onmessage = (e) => segmenter.push(resample(e.data));
     source.connect(node);
     if (display) {

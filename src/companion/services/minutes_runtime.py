@@ -25,12 +25,20 @@ from zoneinfo import ZoneInfo
 from companion.db import meetings as db
 from companion.integrations.claude_runner import ClaudeError
 from companion.integrations.diarization import Diarizer, DiarizationError, SpeakerTurn
-from companion.integrations.whisper import Transcriber, WhisperError
+from companion.integrations.whisper import TimedText, Transcriber, WhisperError
 from companion.services.minutes_audio import AudioError, AudioStore, encode_m4a, read_samples
 from companion.services.minutes_draft import render_markdown
 from companion.services.minutes_editor import LiveEditor
-from companion.services.minutes_final import polish, timed_lines, transcript_lines, write_notes
+from companion.services.minutes_final import (
+    polish,
+    texts_by_segment,
+    timed_lines,
+    transcript_lines,
+    write_notes,
+)
 from companion.services.minutes_hub import MinutesHub
+from companion.services.minutes_scenes import SOLO, Destinations, Scene, get_scene
+from companion.services.minutes_words import Vocabulary, load_vocabulary
 from companion.services.minutes_speakers import apply_speaker_names, parse_participants, split_speaker_map
 
 log = logging.getLogger(__name__)
@@ -61,7 +69,8 @@ class MinutesRuntime:
         diarizer: Diarizer | None = None,
         hub: MinutesHub | None = None,
         editor_factory: Callable[[int], LiveEditor] | None = None,
-        polisher: Callable[[db.Meeting, str], str] = polish,
+        polisher: Callable[[db.Meeting, str], str] | None = None,
+        notes_dir: Path | None = None,
     ) -> None:
         self.hub = hub or MinutesHub()
         self.audio = audio
@@ -72,12 +81,18 @@ class MinutesRuntime:
         # 誰が話したかを声で聞き分ける係. None なら話者は付けない.
         self._diarizer = diarizer
         self._tz = tz
-        self._minutes_dir = minutes_dir
+        # ノートを書き出す場所. ゼミは minutes_dir、授業と打ち合わせは保管庫（notes_dir）の中.
+        self._destinations = Destinations(minutes_dir=minutes_dir, notes_dir=notes_dir)
         # 清書した会議の録音（m4a）を置くフォルダ. None なら置かない（アプリの中には残る）.
         self._recordings_dir = recordings_dir
-        self._polisher = polisher
+        # 清書係. 既定では辞書の語も渡して、用語の書き方をそろえさせる.
+        self._polisher = polisher or (
+            lambda meeting, transcript: polish(meeting, transcript, terms=self._vocabulary(meeting).terms)
+        )
         self._editor_factory = editor_factory or (
-            lambda meeting_id: LiveEditor(meeting_id, hub=self.hub, open_db=open_db, tz=tz)
+            lambda meeting_id: LiveEditor(
+                meeting_id, hub=self.hub, open_db=open_db, tz=tz, scene=self._scene_of(meeting_id)
+            )
         )
         self._queue: queue.Queue[tuple[int, int]] = queue.Queue()
         self._queued: set[tuple[int, int]] = set()
@@ -88,6 +103,8 @@ class MinutesRuntime:
         # 清書が終わったらiPhoneに知らせる会議（録音アプリから自動で届いたもの）と、知らせる係.
         self._notify_ids: set[int] = set()
         self._notifier: Notifier | None = None
+        # 切れ端ごとの文字起こしを後回しにした会議. 清書で録音全体を文字にし直せたら、切れ端ごとには文字起こししない.
+        self._deferred: set[int] = set()
         self._lock = threading.Lock()
         self._started = False
 
@@ -102,11 +119,58 @@ class MinutesRuntime:
         with self._open_db() as conn:
             leftovers = db.pending_segments(conn)
             unfinished = [m.id for m in db.list_meetings(conn) if m.status == db.FINISHING]
+        # 清書中の会議は録音全体を文字にし直すので、切れ端ごとの文字起こしは後回しにする.
+        deferred = set(unfinished) if self._final_transcriber is not None else set()
+        with self._lock:
+            self._deferred |= deferred
         for segment in leftovers:
-            self._enqueue(segment.meeting_id, segment.seg_id)
+            if segment.meeting_id not in deferred:
+                self._enqueue(segment.meeting_id, segment.seg_id)
         threading.Thread(target=self._worker, name="minutes-transcriber", daemon=True).start()
         for meeting_id in unfinished:
             self.finish(meeting_id)
+        self.export_unwritten_memos()
+
+    def export_unwritten_memos(self) -> int:
+        """できあがっているのに保管庫に無いひとりメモを書き出す. 書き出した数を返す.
+
+        ひとりメモは2026-10-25まで保管庫に出していなかったので、その分を埋める。清書はし直さない（手直しも残る）。
+        """
+        with self._open_db() as conn:
+            memos = [
+                m for m in db.list_meetings(conn, limit=10_000)
+                if get_scene(m.kind).key == SOLO and m.status == db.DONE and not m.note_path and m.final_text
+            ]
+        written = 0
+        for memo in memos:
+            m4a = self.audio.meeting_dir(memo.id) / M4A_NAME
+            with self._open_db() as conn:
+                segments = db.list_segments(conn, memo.id)
+            errors: list[str] = []
+            note_path = self._export(
+                memo, body=memo.final_text, polished=memo.polished, lines=transcript_lines(segments, self._tz),
+                total_ms=sum(s.duration_ms for s in segments), m4a=m4a if m4a.exists() else None, errors=errors,
+            )
+            if note_path and not errors:
+                with self._open_db() as conn:
+                    db.set_note_path(conn, memo.id, note_path)
+                written += 1
+        return written
+
+    def create_text_memo(self, pieces: list[tuple[int, int, str]], *, title: str) -> int:
+        """音声入力のページで文字にした話から、ひとりメモを作って清書を裏で始める. 会議の番号を返す.
+
+        pieces は (話し始めのエポックミリ秒, 長さのミリ秒, 文字) の並び。音声入力は録音を残さないので、
+        文字だけを済みの切れ端として入れる（通しの文字起こしはし直さない）。
+        """
+        start = datetime.fromtimestamp(pieces[0][0] / 1000, self._tz)
+        with self._open_db() as conn:
+            meeting_id = db.create_meeting(conn, title, start, kind=SOLO)
+            for seg_id, duration_ms, text in pieces:
+                db.add_segment(conn, meeting_id, seg_id, duration_ms)
+                db.finish_segment(conn, meeting_id, seg_id, text)
+        self.finish(meeting_id)
+        return meeting_id
 
     # ---- 切れ端の受け取りと文字起こし ----
 
@@ -144,6 +208,8 @@ class MinutesRuntime:
 
         録音中とちがい、Haikuに少しずつ編集させる必要はないので、全部を保存して清書中にしてから
         文字起こしの順番待ちに入れる（清書中の会議には編集係を作らない）。
+        清書で録音全体を正確なモデルで文字にし直すときは、切れ端ごとの文字起こしはしない
+        （同じ録音を二度文字にすることになるため）。文字にし直せなかったときだけ、切れ端ごとに文字起こしする。
 
         notify が True なら、清書が終わったときに知らせる（画面を見ていない、自動で届いた録音のため）。
 
@@ -170,12 +236,16 @@ class MinutesRuntime:
             )
         if not seg_ids:
             raise AudioError("音声が入っていませんでした。")
-        if notify:
-            with self._lock:
+        defer = self._final_transcriber is not None
+        with self._lock:
+            if notify:
                 self._notify_ids.add(meeting_id)
+            if defer:
+                self._deferred.add(meeting_id)
         self.finish(meeting_id)
-        for seg_id in seg_ids:
-            self._enqueue(meeting_id, seg_id)
+        if not defer:
+            for seg_id in seg_ids:
+                self._enqueue(meeting_id, seg_id)
         return len(seg_ids)
 
     def retry_transcription(self, meeting_id: int) -> int:
@@ -208,11 +278,31 @@ class MinutesRuntime:
                 with self._lock:
                     self._queued.discard((meeting_id, seg_id))
 
+    def _vocabulary(self, meeting: db.Meeting | None) -> Vocabulary:
+        """会議で使う辞書（人の名前・用語・つなぎ言葉）. 辞書は画面から変わるので、使うたびに読む."""
+        with self._open_db() as conn:
+            return load_vocabulary(conn, meeting)
+
+    def dictate(self, samples, *, previous: str = "") -> str:
+        """音声入力. 短い音声を、議事録と同じWhisper（速いモデル）と辞書で文字にして返す.
+
+        会議には入れない。辞書は「すべての場面」の語だけを使う。
+        previous は同じ音声入力の前の切れ端の文. 録音中の文字起こしと同じく、続きとしてWhisperに渡す.
+        録音中の文字起こしと同じモデルを順番に使うので、会議の文字起こしが混んでいると少し待つ。
+        """
+        vocabulary = self._vocabulary(None)
+        raw = self._transcriber.transcribe(samples, prompt=previous, hotwords=vocabulary.hotwords())
+        return vocabulary.fix(raw)
+
     def _transcribe_one(self, meeting_id: int, seg_id: int) -> None:
         with self._open_db() as conn:
             prompt = db.previous_text(conn, meeting_id, seg_id)
+            vocabulary = load_vocabulary(conn, db.get_meeting(conn, meeting_id))
         try:
-            text = self._transcriber.transcribe(read_samples(self.audio.segment_path(meeting_id, seg_id)), prompt=prompt)
+            raw = self._transcriber.transcribe(
+                read_samples(self.audio.segment_path(meeting_id, seg_id)), prompt=prompt, hotwords=vocabulary.hotwords()
+            )
+            text = vocabulary.fix(raw)
         except Exception as exc:  # noqa: BLE001 - 読めないWAVなども「失敗」にしないと、待ちのまま残り続ける
             log.warning("transcription failed for %s/%s: %s", meeting_id, seg_id, exc)
             with self._open_db() as conn:
@@ -228,6 +318,11 @@ class MinutesRuntime:
                 editor.notify()
         if segment is not None:
             self.hub.publish(meeting_id, self.segment_event(segment))
+
+    def _scene_of(self, meeting_id: int) -> Scene:
+        with self._open_db() as conn:
+            meeting = db.get_meeting(conn, meeting_id)
+        return get_scene(meeting.kind if meeting else None)
 
     def _editor_for(self, meeting_id: int) -> LiveEditor | None:
         """録音中の会議の編集係. 録音を終えたところなら None（新しく起動しない）."""
@@ -299,18 +394,26 @@ class MinutesRuntime:
 
     def _finish(self, meeting_id: int, *, keep_previous: bool = False) -> tuple[str, str | None]:
         """清書して書き出す. (状態, エラー文) を返す."""
-        self._wait_for_transcription(meeting_id)
+        with self._lock:
+            deferred = meeting_id in self._deferred
+            self._deferred.discard(meeting_id)
+        if not deferred:
+            self._wait_for_transcription(meeting_id)
         m4a = self._prepare_audio(meeting_id)
 
         with self._open_db() as conn:
             meeting = db.get_meeting(conn, meeting_id)
-            segments = db.list_segments(conn, meeting_id)
         if meeting is None:
             return db.FAILED, "会議が見つかりません。"
         errors: list[str] = []
         if warning := self._import_warnings.pop(meeting_id, None):
             errors.append(warning)
         lines = self._retranscribe(meeting)
+        if lines is None and deferred:
+            # 録音全体を文字にし直せなかった. 後回しにしていた切れ端ごとの文字起こしをして、それを使う.
+            self._transcribe_pending(meeting_id)
+        with self._open_db() as conn:
+            segments = db.list_segments(conn, meeting_id)
         pending = sum(1 for s in segments if s.status == db.SEGMENT_PENDING)
         failed = sum(1 for s in segments if s.status == db.SEGMENT_FAILED)
         if lines is None:
@@ -329,22 +432,34 @@ class MinutesRuntime:
         if not polished and keep_previous:
             errors.append("前の清書はそのまま残しています。")
             return db.FAILED, " / ".join(errors)
-        note_path = meeting.note_path
-        if self._minutes_dir is not None:
-            try:
-                files = write_notes(
-                    self._minutes_dir, meeting, body=body, polished=polished, transcript=lines,
-                    total_ms=sum(s.duration_ms for s in segments), audio_m4a=m4a,
-                    audio_dir=self._recordings_dir,
-                )
-                note_path = str(files.minutes)
-            except OSError as exc:
-                log.exception("could not write minutes note for meeting %s", meeting_id)
-                errors.append(f"ノートを書き出せませんでした: {exc}")
+        note_path = self._export(meeting, body=body, polished=polished, lines=lines,
+                                 total_ms=sum(s.duration_ms for s in segments), m4a=m4a, errors=errors)
 
         with self._open_db() as conn:
             db.save_final(conn, meeting_id, body, note_path, polished=polished)
         return (db.FAILED, " / ".join(errors)) if errors else (db.DONE, None)
+
+    def _export(
+        self, meeting: db.Meeting, *, body: str, polished: bool, lines: list[str],
+        total_ms: int, m4a: Path | None, errors: list[str],
+    ) -> str | None:
+        """場面に合った場所へノートを書き出し、ノートの場所を返す.
+
+        書き出す場所が無い（保管庫が未設定）、または書き出せなかったときは前の場所のまま（エラーは errors に足す）。
+        """
+        target = self._destinations.for_meeting(meeting)
+        try:
+            if target is None:
+                return meeting.note_path
+            files = write_notes(
+                target, meeting, body=body, polished=polished, transcript=lines,
+                total_ms=total_ms, audio_m4a=m4a, audio_dir=self._recordings_dir,
+            )
+            return str(files.minutes)
+        except OSError as exc:
+            log.exception("could not write minutes note for meeting %s", meeting.id)
+            errors.append(f"ノートを書き出せませんでした: {exc}")
+            return meeting.note_path
 
     def _retranscribe(self, meeting: db.Meeting) -> list[str] | None:
         """録音全体を正確なモデルで文字にし直し、話者を付ける. できなければ None（録音中の文字起こしを使う）."""
@@ -352,18 +467,43 @@ class MinutesRuntime:
         if self._final_transcriber is None or not merged.exists():
             return None
         self.hub.publish(meeting.id, {"type": "notice", "message": "録音全体を、より正確なモデルで文字起こしし直しています。"})
+        vocabulary = self._vocabulary(meeting)
+        # 辞書の語はヒントに渡さない. 正確なモデル（large-v3）は語の一覧をそのまま書き出し、
+        # 話の中身を落とした（2026-10-28、96分の講義が約1000字になった）. 辞書は下の書き直しと清書で使う.
         try:
             samples = read_samples(merged)
             timed = self._final_transcriber.transcribe_long(samples)
         except (WhisperError, OSError) as exc:
             log.warning("final transcription failed for meeting %s: %s", meeting.id, exc)
             return None
+        # つなぎ言葉を消して、間違えやすい書き方を直す. つなぎ言葉だけだった区間は落とす.
+        timed = [t for t in (TimedText(t.start, t.end, vocabulary.fix(t.text)) for t in timed) if t.text]
+        offsets = self.audio.segment_offsets(meeting.id)
+        self._fill_pending(meeting.id, texts_by_segment(timed, offsets))
         turns = self._diarize(meeting, samples)
-        return timed_lines(timed, self.audio.segment_offsets(meeting.id), self._tz, turns) or None
+        return timed_lines(timed, offsets, self._tz, turns) or None
+
+    def _fill_pending(self, meeting_id: int, texts: dict[int, str]) -> None:
+        """まだ文字起こししていない切れ端に、通しで文字にした結果を入れる（会議の画面の文字起こし欄に出すため）."""
+        filled = []
+        with self._open_db() as conn:
+            for seg_id, text in texts.items():
+                if db.fill_pending_segment(conn, meeting_id, seg_id, text):
+                    filled.append(db.get_segment(conn, meeting_id, seg_id))
+        for segment in filled:
+            self.hub.publish(meeting_id, self.segment_event(segment))
+
+    def _transcribe_pending(self, meeting_id: int) -> None:
+        """後回しにしていた切れ端ごとの文字起こしをして、終わるのを待つ."""
+        with self._open_db() as conn:
+            seg_ids = [s.seg_id for s in db.list_segments(conn, meeting_id) if s.status == db.SEGMENT_PENDING]
+        for seg_id in seg_ids:
+            self._enqueue(meeting_id, seg_id)
+        self._wait_for_transcription(meeting_id)
 
     def _diarize(self, meeting: db.Meeting, samples) -> list[SpeakerTurn]:
         """誰が話したかを聞き分ける. 失敗しても話者なしで先へ進む."""
-        if self._diarizer is None:
+        if self._diarizer is None or not get_scene(meeting.kind).diarize:
             return []
         self.hub.publish(meeting.id, {"type": "notice", "message": "誰が話したかを聞き分けています。"})
         num_speakers = len(parse_participants(meeting.participants)) or None
@@ -391,7 +531,7 @@ class MinutesRuntime:
             return self._polisher(meeting, "\n".join(lines)), True
         except ClaudeError as exc:
             errors.append(f"清書に失敗しました: {exc}")
-            return render_markdown(meeting.draft) or "（下書きなし）", False
+            return render_markdown(meeting.draft, get_scene(meeting.kind).sections) or "（下書きなし）", False
 
     # ---- 画面用 ----
 

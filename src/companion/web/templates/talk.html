@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}話して入力 — daily-companion{% endblock %}
+
+{% block head %}
+<meta name="apple-mobile-web-app-title" content="話して入力">
+<style>
+  #talk-app [hidden] { display: none !important; }
+  .rec-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .rec-row .btn { min-height: 52px; font-size: 18px; padding: 10px 22px; }
+  .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .btn-danger:hover { background: #B8184A; border-color: #B8184A; color: #fff; }
+  .rec-timer { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .rec-level { flex: 1; min-width: 80px; height: 8px; background: var(--group); border-radius: 4px; overflow: hidden; }
+  .rec-level > span { display: block; height: 100%; width: 0; background: var(--main); }
+  .rec-state { margin-top: 10px; font-size: 14px; font-weight: 600; }
+  #talk-text { min-height: 30vh; font-size: 17px; line-height: 1.7; }
+  .done-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .done-row .btn { min-height: 48px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="talk-app">
+  <div class="page-head">
+    <div>
+      <h1>話して入力</h1>
+      <p class="page-sub">話の切れ目ごとに、数秒で文字が出ます。</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="/memos"><i data-lucide="sticky-note"></i>ひとりメモ</a>
+    </div>
+  </div>
+
+  <div class="notice error" id="talk-error" hidden><i data-lucide="mic-off"></i><p></p></div>
+
+  <section class="card">
+    <div class="rec-row">
+      <button type="button" class="btn btn-primary" id="talk-start"><i data-lucide="mic"></i>話す</button>
+      <button type="button" class="btn btn-danger" id="talk-stop" hidden><i data-lucide="square"></i>止める</button>
+      <span class="rec-timer" id="talk-timer" hidden>0:00</span>
+      <div class="rec-level" id="talk-level" hidden><span></span></div>
+    </div>
+    <p class="rec-state" id="talk-state">「話す」を押してから話してください。録っている間は画面をつけたままにしてください（消えると止まります）。</p>
+  </section>
+
+  <section class="card" style="margin-top:14px">
+    <label for="talk-text">文字</label>
+    <textarea id="talk-text" placeholder="ここに文字が出ます。あとから直せます。" autocapitalize="sentences"></textarea>
+    <div class="done-row">
+      <button type="button" class="btn btn-primary" id="talk-copy" disabled><i data-lucide="copy"></i>コピー</button>
+      <button type="button" class="btn" id="talk-memo" disabled><i data-lucide="sticky-note"></i>ひとりメモにする</button>
+      <button type="button" class="btn" id="talk-clear" disabled><i data-lucide="eraser"></i>消して最初から</button>
+    </div>
+    <p class="hint" style="margin-top:10px">録音は文字にしたらすぐ消します。「ひとりメモにする」と、文字を清書してひとりメモに残します（録音は残りません）。</p>
+  </section>
+</div>
+<script src="/static/minutes/recorder.js"></script>
+<script src="/static/memos/talk.js"></script>
+{% endblock %}

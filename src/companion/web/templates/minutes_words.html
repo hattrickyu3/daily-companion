@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}辞書 — 議事録{% endblock %}
+
+{% block head %}
+<style>
+  table.words td { vertical-align: middle; }
+  table.words td.word { font-weight: 700; }
+  table.words .btn-icon { padding: 0; width: 36px; height: 36px; color: var(--danger); }
+  table.words form { margin: 0; }
+  table.words td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .row-ops { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+  .fillers textarea { min-height: 72px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>辞書</h1>
+    <p class="page-sub">{{ words|length }}語</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/minutes"><i data-lucide="list"></i>議事録の一覧</a>
+  </div>
+</div>
+
+{% if suggestions %}
+<section class="card">
+  <h2>直したところから見つけた候補</h2>
+  <p class="hint">議事録を「手で直す」で直したときに拾った言葉と、あなたの書いた文章（大学のノート・日記）から選んだ言葉です。登録すると、次の文字起こしから使います。</p>
+  <div class="table-wrap" style="margin-top:10px">
+    <table class="words">
+      <thead><tr><th>正しい書き方</th><th>直す前</th><th>使う場面</th><th>回数</th><th></th></tr></thead>
+      <tbody>
+        {% for s, scope in suggestions %}
+        <tr>
+          <td class="word">{{ s.right }}</td>
+          <td>{{ s.wrong or "—（文章から）" }}</td>
+          <td>{{ scope }}</td>
+          <td class="num">{{ s.count }}回</td>
+          <td>
+            <div class="row-ops">
+              <form method="post" action="/minutes/words/suggestions/{{ s.id }}/accept">
+                <button class="btn" type="submit"><i data-lucide="check"></i>登録する</button>
+              </form>
+              <form method="post" action="/minutes/words/suggestions/{{ s.id }}/dismiss">
+                <button class="btn" type="submit"><i data-lucide="x"></i>いらない</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="card"{% if suggestions %} style="margin-top:14px"{% endif %}>
+  <h2>語を足す</h2>
+  {% if error %}<div class="notice error"><i data-lucide="alert-triangle"></i><p>{{ error }}</p></div>{% endif %}
+  <form method="post" action="/minutes/words">
+    <div class="fields">
+      <div>
+        <label for="word">正しい書き方</label>
+        <input type="text" id="word" name="word" maxlength="40" placeholder="例: 形態素解析、田中" required>
+      </div>
+      <div>
+        <label for="variants">間違えやすい書き方（任意）</label>
+        <input type="text" id="variants" name="variants" maxlength="200" placeholder="例: 形体素解析、けいたいそ解析">
+      </div>
+      <div>
+        <label for="course">使う場面</label>
+        <select id="course" name="course">
+          <option value="">すべての場面</option>
+          {% set ns = namespace(term="") %}
+          {% for c in courses %}
+            {% if c.term != ns.term %}{% if ns.term %}</optgroup>{% endif %}<optgroup label="{{ c.term }}">{% set ns.term = c.term %}{% endif %}
+            <option value="{{ c.path }}">{{ c.name }} の授業だけ</option>
+          {% endfor %}
+          {% if ns.term %}</optgroup>{% endif %}
+        </select>
+      </div>
+    </div>
+    <div class="form-foot">
+      <p class="hint">正しい書き方は文字起こしのヒントとして渡し、はじめからその書き方で出やすくします。間違えやすい書き方（2文字以上、「、」区切り）は、文字起こしのあとで正しい書き方に置き換えます。参加者の名前は、録音のときに入れれば自動でヒントになります。登録できる数に上限はありません（ヒントには長さの限りがあるので、録音中に出てきた語を優先して渡します）。</p>
+      <button class="btn btn-primary" type="submit"><i data-lucide="plus"></i>足す</button>
+    </div>
+  </form>
+</section>
+
+{% if words %}
+<div class="table-wrap" style="margin-top:14px">
+  <table class="words">
+    <thead><tr><th>正しい書き方</th><th>間違えやすい書き方</th><th>使う場面</th><th></th></tr></thead>
+    <tbody>
+      {% for w, scope in words %}
+      <tr>
+        <td class="word">{{ w.word }}</td>
+        <td>{{ w.variants|join("、") or "—" }}</td>
+        <td>{{ scope }}</td>
+        <td>
+          <form method="post" action="/minutes/words/{{ w.id }}/delete" data-confirm="「{{ w.word }}」を辞書から消しますか？" onsubmit="return confirm(this.dataset.confirm)">
+            <button class="btn btn-icon" type="submit" aria-label="{{ w.word }}を消す" title="消す"><i data-lucide="trash-2"></i></button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty" style="margin-top:14px">まだ語がありません。ゼミの人の名前や、授業でよく出る用語を足してください。</p>
+{% endif %}
+
+<section class="card fillers" style="margin-top:14px">
+  <h2>消すつなぎ言葉</h2>
+  <form method="post" action="/minutes/words/fillers">
+    <label for="fillers">消す言葉（「、」区切り）</label>
+    <textarea id="fillers" name="fillers" maxlength="2000">{{ fillers }}</textarea>
+    <div class="form-foot">
+      <p class="hint">文の頭か、読点・空白のあとにあるものだけを消します（「あの人」の「あの」などは消しません）。AIに書き直させるのではなく、ここにある言葉だけを機械的に消します。初めの一覧：{{ default_fillers }}</p>
+      <button class="btn" type="submit"><i data-lucide="check"></i>保存</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

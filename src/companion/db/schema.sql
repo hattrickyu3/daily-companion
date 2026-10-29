@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS meetings (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     title       TEXT NOT NULL,
     participants TEXT NOT NULL DEFAULT '',  -- 参加者の名前（「自分、田中、佐藤」）. 話者の聞き分けの人数にも使う
+    kind        TEXT NOT NULL DEFAULT 'seminar', -- 場面: seminar / lecture / meeting / solo（services/minutes_scenes.py）
+    course      TEXT NOT NULL DEFAULT '',   -- 授業のとき、保管庫の授業フォルダ（「3年３Q/自然言語処理」）
     started_at  TEXT NOT NULL,              -- ISO 8601（ローカル時刻・タイムゾーン付き）
     ended_at    TEXT,
     status      TEXT NOT NULL DEFAULT 'recording',
@@ -148,4 +150,36 @@ CREATE TABLE IF NOT EXISTS meeting_segments (
     drafted     INTEGER NOT NULL DEFAULT 0, -- Haikuの議事録に反映済みか
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (meeting_id, seg_id)
+);
+
+-- 議事録の辞書. 人の名前や授業の用語の正しい書き方と、文字起こしで間違えやすい書き方.
+-- 正しい書き方はWhisperにヒント（hotwords）として渡し、間違えやすい書き方は文字起こしのあとで置き換える.
+CREATE TABLE IF NOT EXISTS dictionary_words (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    word        TEXT NOT NULL,              -- 正しい書き方（「田中」「形態素解析」）
+    variants    TEXT NOT NULL DEFAULT '',   -- 間違えやすい書き方（「田名か、棚か」）. 「、」区切り
+    course      TEXT NOT NULL DEFAULT '',   -- 授業フォルダ（「3年３Q/自然言語処理」）. 空ならどの場面でも使う
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (word, course)
+);
+
+-- アプリの設定（1つの値 = 1行）. 今は議事録のつなぎ言葉の一覧だけ.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 議事録を手で直したところから拾った、辞書の候補. 辞書の画面で本人が登録するか「いらない」を選ぶ.
+-- status: pending（まだ選んでいない）/ accepted（登録した）/ dismissed（いらない. 同じ組は二度と出さない）
+CREATE TABLE IF NOT EXISTS word_suggestions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    wrong       TEXT NOT NULL,              -- 直す前（間違えやすい書き方）
+    right       TEXT NOT NULL,              -- 直した後（正しい書き方）
+    course      TEXT NOT NULL DEFAULT '',   -- 最初に見つけた会議の授業. 登録するとこの授業の語になる（空ならどの場面でも）
+    meeting_id  INTEGER,                    -- 最初に見つけた会議
+    count       INTEGER NOT NULL DEFAULT 1, -- 同じ直しをした回数
+    status      TEXT NOT NULL DEFAULT 'pending',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (wrong, right)
 );

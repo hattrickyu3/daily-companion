@@ -29,6 +29,9 @@ class Meeting:
     started_at: datetime
     status: str
     participants: str = ""
+    # 場面（seminar / lecture / meeting / solo）と、授業のときの授業フォルダ. services/minutes_scenes.py を参照.
+    kind: str = "seminar"
+    course: str = ""
     ended_at: datetime | None = None
     draft: dict[str, str] = field(default_factory=dict)
     final_text: str | None = None
@@ -68,6 +71,8 @@ def _to_meeting(row: sqlite3.Row) -> Meeting:
         id=row["id"],
         title=row["title"],
         participants=row["participants"],
+        kind=row["kind"],
+        course=row["course"],
         started_at=datetime.fromisoformat(row["started_at"]),
         ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
         status=row["status"],
@@ -95,12 +100,13 @@ def _to_segment(row: sqlite3.Row) -> Segment:
 
 
 def create_meeting(
-    conn: sqlite3.Connection, title: str, started_at: datetime, *, participants: str = ""
+    conn: sqlite3.Connection, title: str, started_at: datetime, *,
+    participants: str = "", kind: str = "seminar", course: str = "",
 ) -> int:
     """会議を作って id を返す."""
     cursor = conn.execute(
-        "INSERT INTO meetings (title, participants, started_at) VALUES (?, ?, ?)",
-        (title, participants, started_at.isoformat(timespec="seconds")),
+        "INSERT INTO meetings (title, participants, kind, course, started_at) VALUES (?, ?, ?, ?, ?)",
+        (title, participants, kind, course, started_at.isoformat(timespec="seconds")),
     )
     return int(cursor.lastrowid)
 
@@ -112,6 +118,19 @@ def delete_meeting(conn: sqlite3.Connection, meeting_id: int) -> None:
 
 def set_participants(conn: sqlite3.Connection, meeting_id: int, participants: str) -> None:
     conn.execute("UPDATE meetings SET participants = ? WHERE id = ?", (participants, meeting_id))
+
+
+def set_scene(conn: sqlite3.Connection, meeting_id: int, kind: str, course: str) -> bool:
+    """場面と授業を変える. 次の清書（やり直し）から、その場面の書き方と置き場所になる.
+
+    録音中・清書中は変えない（変えたら True）. 状態の確認と書き換えを1つの文で行い、
+    その間に「清書をやり直す」が割り込んでも、清書中の会議の場面が変わらないようにする。
+    """
+    cursor = conn.execute(
+        "UPDATE meetings SET kind = ?, course = ? WHERE id = ? AND status IN (?, ?)",
+        (kind, course, meeting_id, DONE, FAILED),
+    )
+    return cursor.rowcount > 0
 
 
 def get_meeting(conn: sqlite3.Connection, meeting_id: int) -> Meeting | None:
@@ -162,6 +181,11 @@ def save_final(
     )
 
 
+def set_note_path(conn: sqlite3.Connection, meeting_id: int, note_path: str) -> None:
+    """書き出したノートの場所だけを入れる（清書の中身はそのまま）."""
+    conn.execute("UPDATE meetings SET note_path = ? WHERE id = ?", (note_path, meeting_id))
+
+
 def save_hand_edit(conn: sqlite3.Connection, meeting_id: int, text: str) -> None:
     """手で直した議事録を保存する."""
     conn.execute(
@@ -190,6 +214,15 @@ def finish_segment(conn: sqlite3.Connection, meeting_id: int, seg_id: int, text:
         "UPDATE meeting_segments SET status = ?, text = ?, error = NULL WHERE meeting_id = ? AND seg_id = ?",
         (SEGMENT_DONE, text, meeting_id, seg_id),
     )
+
+
+def fill_pending_segment(conn: sqlite3.Connection, meeting_id: int, seg_id: int, text: str) -> bool:
+    """文字起こしが済んでいない切れ端に本文を入れて済みにする. 済みにしたら True."""
+    cursor = conn.execute(
+        "UPDATE meeting_segments SET status = ?, text = ?, error = NULL WHERE meeting_id = ? AND seg_id = ? AND status = ?",
+        (SEGMENT_DONE, text, meeting_id, seg_id, SEGMENT_PENDING),
+    )
+    return cursor.rowcount > 0
 
 
 def fail_segment(conn: sqlite3.Connection, meeting_id: int, seg_id: int, error: str) -> None:

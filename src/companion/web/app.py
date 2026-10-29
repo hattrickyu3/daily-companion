@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, time, timedelta
@@ -23,6 +24,7 @@ from companion.db.briefings import get_briefing
 from companion.db.connection import session
 from companion.db.events import list_events_for
 from companion.db.jobs import latest_run_per_job, list_recent_runs
+from companion.db.meetings import list_meetings
 from companion.db.news import list_digests_for
 from companion.db.repository import (
     get_entry,
@@ -32,6 +34,7 @@ from companion.db.repository import (
 )
 from companion.db.reviews import list_reviews
 from companion.services.diary import append_entry, save_entry, structure_entry
+from companion.services.memos import MemoRow, memos_on
 from companion.integrations.calendar_google import CalendarError
 from companion.integrations.notify import send_notification
 from companion.links import app_url
@@ -48,15 +51,22 @@ from companion.services.schedule import get_events_for
 from companion.web.access import OwnDeviceOnlyMiddleware
 from companion.web.folder_watch import start_folder_watch
 from companion.web.mail_routes import action_items_for as mail_actions_for
+from companion.web.dictate_routes import router as dictate_router
 from companion.web.mail_routes import router as mail_router
+from companion.web.memos_routes import router as memos_router
 from companion.web.minutes_edit_routes import router as minutes_edit_router
+from companion.web.minutes_quick_routes import router as minutes_quick_router
 from companion.web.minutes_routes import router as minutes_router
+from companion.web.minutes_words_routes import router as minutes_words_router
+from companion.web.minutes_scene_routes import router as minutes_scene_router
 from companion.web.notes_routes import router as notes_router
 from companion.web.webdav_routes import router as webdav_router
 
 log = logging.getLogger(__name__)
 
 STRUCTURE_FAILURE_PRIORITY = 4
+# 日記のページでひとりメモを探す範囲（新しい順）.
+MEMO_SCAN_LIMIT = 2000
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -74,8 +84,13 @@ app = FastAPI(title="daily-companion", docs_url=None, redoc_url=None, lifespan=l
 app.add_middleware(OwnDeviceOnlyMiddleware)
 app.include_router(notes_router)
 app.include_router(mail_router)
+app.include_router(dictate_router)
+app.include_router(minutes_quick_router)
+app.include_router(memos_router)
+app.include_router(minutes_words_router)  # /minutes/{id} より先に
 app.include_router(minutes_router)
 app.include_router(minutes_edit_router)
+app.include_router(minutes_scene_router)
 app.include_router(webdav_router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -216,6 +231,15 @@ def entries_page(request: Request, tag: str | None = None) -> HTMLResponse:
     )
 
 
+def _memos_on(conn: sqlite3.Connection, day: date) -> list[MemoRow]:
+    """その日のひとりメモ. 議事録の表がまだそろっていない（議事録を一度も開いていない）ときは出さない."""
+    try:
+        return memos_on(list_meetings(conn, limit=MEMO_SCAN_LIMIT), day)
+    except sqlite3.OperationalError:
+        log.warning("could not read memos for %s", day, exc_info=True)
+        return []
+
+
 @app.get("/entries/{entry_date}", response_class=HTMLResponse)
 def entry_page(request: Request, entry_date: str) -> HTMLResponse:
     """1日分の詳細. 整理中なら数秒ごとに自動で読み直す."""
@@ -229,6 +253,7 @@ def entry_page(request: Request, entry_date: str) -> HTMLResponse:
         briefing = get_briefing(conn, day)
         # 過去日は同期済みのキャッシュを見る。今日だけは最新をAPIから取る。
         events = get_events_for(day) if day == today_local() else list_events_for(conn, day)
+        memos = _memos_on(conn, day)
 
     return templates.TemplateResponse(
         request,
@@ -238,6 +263,7 @@ def entry_page(request: Request, entry_date: str) -> HTMLResponse:
             "entry": entry,
             "briefing": briefing,
             "events": events,
+            "memos": memos,
             "prev_day": day - timedelta(days=1),
             "next_day": day + timedelta(days=1),
         },

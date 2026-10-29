@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
 <title>{% block title %}daily-companion{% endblock %}</title>
+{# iPhoneのSafariで「ホーム画面に追加」したとき、アドレスバーのないアプリとして開く。
+   manifest は置かない。start_url を決めると、どの画面から追加しても同じ画面で開いてしまい、
+   「議事録だけのアイコン」のように画面ごとのアイコンを作れなくなる。 #}
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="日記">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
 {# 見た目は ~/.claude/skills/my-web-style（SmartHR風）に合わせている。
    補足もグレーにせず本文と同じ色で書き、違いは大きさと太さで出す。
    アニメーションは入れない。 #}
@@ -238,6 +247,7 @@
       {{ nav("/notes", "library", "ノート", path.startswith("/notes")) }}
       {{ nav("/mail", "mail", "メール", path.startswith("/mail")) }}
       {{ nav("/minutes", "mic", "議事録", path.startswith("/minutes")) }}
+      {{ nav("/memos", "sticky-note", "ひとりメモ", path.startswith("/memos")) }}
       <hr>
       {{ nav("/search", "search", "検索", path.startswith("/search")) }}
       {{ nav("/status", "activity", "状態", path.startswith("/status")) }}

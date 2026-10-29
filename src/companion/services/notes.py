@@ -15,8 +15,10 @@ from functools import cached_property
 from pathlib import Path, PurePosixPath
 
 NOTE_SUFFIX = ".md"
-# 授業フォルダの中で、まとめノートを置いているフォルダの名前。
+# 授業フォルダの中で、まとめノートを置いているフォルダと、議事録アプリが授業の記録を置くフォルダの名前。
+# どちらも授業の一部として扱い、ノート画面では授業ごとに1つにまとめて出す。
 NOTES_SUBFOLDER = "ノート"
+COURSE_SUBFOLDERS = (NOTES_SUBFOLDER, "議事録")
 
 
 @dataclass(frozen=True)
@@ -41,9 +43,9 @@ def _is_hidden(parts: tuple[str, ...]) -> bool:
 
 
 def course_folder(note: PurePosixPath) -> str:
-    """ノートが属する授業のフォルダ. まとめ用の `ノート` フォルダは授業の一部として扱う."""
+    """ノートが属する授業のフォルダ. まとめ用の `ノート` と授業の記録の `議事録` は授業の一部として扱う."""
     parts = note.parent.parts
-    if parts and parts[-1] == NOTES_SUBFOLDER:
+    if parts and parts[-1] in COURSE_SUBFOLDERS:
         parts = parts[:-1]
     return "/".join(parts)
 

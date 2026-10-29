@@ -146,3 +146,52 @@ def test_録音中の会議は直す画面を開けない(tmp_path, monkeypatch)
         response = client.get("/minutes/1/edit", follow_redirects=False)
 
     assert response.status_code == 303
+
+
+def test_直した言葉を辞書の候補にためて一覧と辞書の画面に出す(finished) -> None:
+    from companion.db import words as words_db
+
+    client, db_path, _ = finished
+    client.post("/minutes/1/edit", data={"body": "## 要点\n\n- 田名かさんが形体素解析を報告した"})
+
+    client.post("/minutes/1/edit", data={"body": "## 要点\n\n- 田中さんが形態素解析を報告した"})
+
+    with session(db_path) as conn:
+        found = [(s.wrong, s.right) for s in words_db.list_suggestions(conn)]
+    assert found == [("田名か", "田中"), ("形体素解析", "形態素解析")]
+    assert "候補2" in client.get("/minutes").text
+    page = client.get("/minutes/words").text
+    assert "直したところから見つけた候補" in page and "田名か" in page
+
+
+def test_候補を登録すると辞書に入り候補から消える(finished) -> None:
+    from companion.db import words as words_db
+
+    client, db_path, _ = finished
+    client.post("/minutes/1/edit", data={"body": "## 要点\n\n- 田名かさんが報告した"})
+    client.post("/minutes/1/edit", data={"body": "## 要点\n\n- 田中さんが報告した"})
+    with session(db_path) as conn:
+        suggestion = words_db.list_suggestions(conn)[0]
+
+    client.post(f"/minutes/words/suggestions/{suggestion.id}/accept")
+
+    with session(db_path) as conn:
+        assert words_db.list_suggestions(conn) == []
+        assert [(w.word, w.variants) for w in words_db.list_words(conn)] == [("田中", ("田名か",))]
+    assert "候補" not in client.get("/minutes").text.split("辞書", 1)[1][:40]
+
+
+def test_候補を拾えなくても直した議事録は保存する(finished, monkeypatch) -> None:
+    from companion.web import minutes_edit_routes
+
+    client, db_path, _ = finished
+
+    def broken(before, after):
+        raise RuntimeError("壊れた")
+
+    monkeypatch.setattr(minutes_edit_routes, "find_corrections", broken)
+    response = client.post("/minutes/1/edit", data={"body": "## 要点\n\n- 直した"}, follow_redirects=False)
+
+    assert response.status_code == 303
+    with session(db_path) as conn:
+        assert db.get_meeting(conn, 1).final_text == "## 要点\n\n- 直した"

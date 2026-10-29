@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_scene_fields.html" import scene_fields with context %}
 {% block title %}{{ meeting.title }} — 議事録{% endblock %}
 
 {% block head %}
@@ -10,6 +11,7 @@
   .participants { margin-top: 6px; font-size: 15px; }
   .participants summary { cursor: pointer; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
   .participants .form-foot { margin-top: 8px; justify-content: flex-start; }
+  .participants .fields { margin-top: 8px; }
   .recorder { position: sticky; top: 60px; z-index: 5; }
   .rec-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
   .rec-row .btn { min-height: 48px; font-size: 17px; padding: 10px 18px; }
@@ -55,6 +57,18 @@
         </form>
         <p class="hint" style="margin-top:6px">直したあとに「清書をやり直す」を押すと、名前の付け直しに使います。</p>
       </details>
+      {% if finished %}
+      <details class="participants">
+        <summary><i data-lucide="tag"></i>場面：{{ scene_name }}</summary>
+        <form method="post" action="/minutes/{{ meeting.id }}/scene">
+          <div class="fields">{{ scene_fields("scene", meeting.kind, meeting.course) }}</div>
+          <div class="form-foot"><button class="btn" type="submit"><i data-lucide="check"></i>保存</button></div>
+        </form>
+        <p class="hint" style="margin-top:6px">変えたあとに「清書をやり直す」を押すと、その場面の見出しで書き直し、ノートも新しい場所へ移します。ひとりメモにすると保管庫のノートは消します（中身はこのアプリに残ります）。</p>
+      </details>
+      {% else %}
+      <p class="participants"><i data-lucide="tag"></i>場面：{{ scene_name }}</p>
+      {% endif %}
     </div>
     <div class="actions">
       <a class="btn" href="/minutes"><i data-lucide="list"></i>議事録の一覧</a>
@@ -137,4 +151,5 @@
 
 <script src="/static/minutes/recorder.js"></script>
 <script src="/static/minutes/live.js"></script>
+<script src="/static/minutes/scene_fields.js"></script>
 {% endblock %}

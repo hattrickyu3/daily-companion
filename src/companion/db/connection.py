@@ -63,6 +63,9 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("meetings", "participants", "TEXT NOT NULL DEFAULT ''"),
     # 議事録を手で直したか — 清書のやり直しで上書きする前に警告するため 2026-10-03 に追加
     ("meetings", "hand_edited", "INTEGER NOT NULL DEFAULT 0"),
+    # 議事録の場面と授業 — ゼミ以外（授業・打ち合わせ・ひとりメモ）にも使うため 2026-10-24 に追加
+    ("meetings", "kind", "TEXT NOT NULL DEFAULT 'seminar'"),
+    ("meetings", "course", "TEXT NOT NULL DEFAULT ''"),
 )
 
 

@@ -167,3 +167,41 @@ def test_不正な日付は一覧に戻される(client) -> None:
     response = client.get("/entries/not-a-date")
 
     assert response.url.path == "/entries"
+
+
+def test_ホーム画面に追加するとアプリとして開く指定がある(client) -> None:
+    response = client.get("/")
+
+    assert '<meta name="apple-mobile-web-app-capable" content="yes">' in response.text
+    assert '<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">' in response.text
+
+
+def test_ホーム画面用のアイコンが配信される(client) -> None:
+    response = client.get("/static/icons/apple-touch-icon.png")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content.startswith(b"\x89PNG")
+
+
+def test_日記のページにその日のひとりメモが出る(client) -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from companion.db import meetings as meetings_db
+    from companion.web import app as web_app
+
+    tz = ZoneInfo("Asia/Tokyo")
+    with web_app.session() as conn:
+        memo = meetings_db.create_meeting(conn, "進路のこと", datetime(2026, 8, 7, 21, 0, tzinfo=tz), kind="solo")
+        meetings_db.save_final(conn, memo, "## 要点\n\n- 院に行くか迷っている", None, polished=True)
+        meetings_db.set_status(conn, memo, meetings_db.DONE)
+        meetings_db.create_meeting(conn, "ゼミ", datetime(2026, 8, 7, 18, 0, tzinfo=tz))
+        meetings_db.create_meeting(conn, "別の日のメモ", datetime(2026, 8, 6, 21, 0, tzinfo=tz), kind="solo")
+
+    page = client.get("/entries/2026-08-07").text
+    other_day = client.get("/entries/2026-08-05").text
+
+    assert "この日のひとりメモ" in page and "進路のこと" in page and "院に行くか迷っている" in page
+    assert "別の日のメモ" not in page and ">ゼミ<" not in page
+    assert "この日のひとりメモ" not in other_day

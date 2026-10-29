@@ -23,7 +23,6 @@ from companion.db.meetings import Segment, get_meeting, mark_drafted, save_draft
 from companion.integrations.claude_runner import ClaudeError
 from companion.integrations.claude_stream import ClaudeStreamSession
 from companion.services.minutes_draft import (
-    SECTIONS,
     apply_ops,
     editing_section,
     normalize_draft,
@@ -31,6 +30,7 @@ from companion.services.minutes_draft import (
     section_label,
 )
 from companion.services.minutes_hub import MinutesHub
+from companion.services.minutes_scenes import Scene, get_scene
 
 log = logging.getLogger(__name__)
 
@@ -46,33 +46,40 @@ PUBLISH_INTERVAL_SEC = 0.15
 IDLE_CLOSE_SEC = 20 * 60
 MAX_BACKOFF_SEC = 60
 
-SYSTEM_PROMPT = f"""あなたは会話や会議の記録係です。発言の文字起こしが少しずつ届きます。
+_PROMPT_HEAD = """あなたは会話や会議の記録係です。発言の文字起こしが少しずつ届きます。
 届くたびに、記録のうち変わる見出しだけを書き直してください。
+"""
 
-場面はゼミ・授業・打ち合わせ・家族や友人との会話などいろいろです。
-最初に渡す「会議の名前」と話の中身から場面を考え、それに合った書き方にしてください。
-会議らしくない場面（雑談など）では、決まったこと・やることを無理に作らない。
-
-記録の見出し: {" / ".join(SECTIONS)}
-
-出力の形式（これ以外は一切書かない。前置き・説明・コードブロックは不要）:
+_PROMPT_FORMAT = """出力の形式（これ以外は一切書かない。前置き・説明・コードブロックは不要）:
 @@ 見出し     その見出しの中身を丸ごと置き換える
 @@+ 見出し    その見出しの末尾に書き足す
 変える所がなければ「@@ 変更なし」とだけ書く。
 
 書き方:
 - 中身は「- 」で始まる箇条書き。1項目1行、40字くらいまで。
-- 話したことは原則 @@+ で書き足す。直前の項目を直すときだけ @@ で全体を置き換える。
 - @@+ で書き足すのは、今回届いた発言の内容だけ。前に書いた項目は繰り返さない。
 - 書くことがない見出しには触れない（「なし」「変更なし」と中身に書かない）。
 - 要点は全体を3行以内で。話題が変わったときだけ更新する。
-- 決まったこと・やること・次に向けては、はっきり決まったこと・頼まれたこと・約束したことだけ書く。
-- やることは「誰が・何を・いつまでに」。わからない部分は「（未定）」と書く。
-- 保留・疑問には、結論が出なかった話と、答えが出ていない疑問を書く。
-- 文字起こしには聞き間違いがある。文脈から明らかな誤りは直してよいが、話されていないことは書かない。
+"""
+
+_PROMPT_TAIL = """- 文字起こしには聞き間違いがある。文脈から明らかな誤りは直してよいが、話されていないことは書かない。
 - 人の名前は、文字起こしで呼ばれていてわかるときだけ書く。
 - 相づちや雑談だけなら「@@ 変更なし」。
 """
+
+
+def system_prompt(scene: Scene) -> str:
+    """場面ごとの、記録係への指示. 見出しごとの書き方は場面が持っている."""
+    return (
+        f"{_PROMPT_HEAD}\n場面: {scene.label}\n"
+        "会議らしくない話（雑談など）では、決まったこと・やることを無理に作らない。\n\n"
+        f"記録の見出し: {' / '.join(scene.sections)}\n\n"
+        f"{_PROMPT_FORMAT}{scene.live_rules}\n{_PROMPT_TAIL}"
+    )
+
+
+# 場面を指定しないとき（ゼミ）の指示.
+SYSTEM_PROMPT = system_prompt(get_scene(None))
 
 
 def format_lines(segments: list[Segment], tz: ZoneInfo) -> str:
@@ -82,12 +89,14 @@ def format_lines(segments: list[Segment], tz: ZoneInfo) -> str:
     )
 
 
-def build_message(lines: str, draft: dict[str, str], *, fresh: bool, title: str = "") -> str:
+def build_message(
+    lines: str, draft: dict[str, str], *, fresh: bool, title: str = "", sections: tuple[str, ...] | None = None
+) -> str:
     """Haikuに渡す1回分の本文. 起動し直した直後は、会議の名前と今の記録も渡して続きから書かせる."""
     if not fresh:
         return f"新しい発言（この内容だけを反映する）:\n{lines}"
     current = "\n".join(
-        f"@@ {s}\n{draft[s].strip()}" for s in SECTIONS if draft.get(s, "").strip()
+        f"@@ {s}\n{draft[s].strip()}" for s in sections or get_scene(None).sections if draft.get(s, "").strip()
     ) or "（まだ何もない）"
     return (
         f"会議の名前: {title or '（なし）'}\n\n"
@@ -106,12 +115,14 @@ class LiveEditor:
         open_db: Callable[[], AbstractContextManager[Connection]],
         tz: ZoneInfo,
         session: ClaudeStreamSession | None = None,
+        scene: Scene | None = None,
     ) -> None:
         self.meeting_id = meeting_id
         self._hub = hub
         self._open_db = open_db
         self._tz = tz
-        self._session = session or ClaudeStreamSession(model=HAIKU_MODEL, system_prompt=SYSTEM_PROMPT)
+        self._scene = scene or get_scene(None)
+        self._session = session or ClaudeStreamSession(model=HAIKU_MODEL, system_prompt=system_prompt(self._scene))
         self._wake = threading.Event()
         self._stopping = False
         self._last_activity = time.monotonic()
@@ -173,8 +184,9 @@ class LiveEditor:
         lines = format_lines(segments, self._tz)
         base = normalize_draft(meeting.draft)
         if lines:
-            text = self._ask(build_message(lines, base, fresh=fresh, title=meeting.title), base)
-            draft = apply_ops(base, parse_ops(text))
+            sections = self._scene.sections
+            text = self._ask(build_message(lines, base, fresh=fresh, title=meeting.title, sections=sections), base)
+            draft = apply_ops(base, parse_ops(text, sections=sections))
         else:
             draft = base  # 無音だけの切れ端. Haikuに渡すものがない
 
@@ -196,7 +208,7 @@ class LiveEditor:
             if now - last_publish < PUBLISH_INTERVAL_SEC:
                 return
             last_publish = now
-            ops = parse_ops("".join(received), final=False)
+            ops = parse_ops("".join(received), final=False, sections=self._scene.sections)
             section = editing_section(ops)
             self._hub.publish(self.meeting_id, {
                 "type": "draft",

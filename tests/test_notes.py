@@ -41,6 +41,17 @@ def test_ノートは一番上のフォルダごとにまとまる(vault) -> Non
     assert groups[""] == ["直下のメモ.md"]
 
 
+def test_授業の議事録フォルダも授業のノートと一緒にまとまる(tmp_path) -> None:
+    root = tmp_path / "大学"
+    for rel in ["3年３Q/自然言語処理/ノート/自然言語処理まとめ.md", "3年３Q/自然言語処理/議事録/2026-10-24 自然言語処理.md"]:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("本文", encoding="utf-8")
+
+    groups = {group.folder: len(group.notes) for group in Vault(root).groups()}
+
+    assert groups == {"3年３Q/自然言語処理": 2}
+
+
 def test_学期のフォルダの中でも授業ごとにまとまり新しい学期が先に来る(tmp_path) -> None:
     root = tmp_path / "大学"
     for rel in [

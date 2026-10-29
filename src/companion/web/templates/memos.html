@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}ひとりメモ — daily-companion{% endblock %}
+
+{% block head %}
+<style>
+  .memo-list { display: grid; gap: 10px; margin-top: 14px; }
+  .memo { display: block; text-decoration: none; color: inherit; }
+  .memo:hover .memo-title { text-decoration: underline; }
+  .memo-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .memo-title { font-weight: 700; font-size: 17px; }
+  .memo-date { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .memo ul { margin: 8px 0 0; padding-left: 1.3em; }
+  .memo li + li { margin-top: 2px; }
+  .start-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .start-row .btn { min-height: 48px; font-size: 17px; padding: 10px 18px; }
+  .search-row { display: flex; gap: 8px; margin-top: 14px; }
+  .search-row input { flex: 1; min-width: 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set WD = "月火水木金土日" %}
+<div class="page-head">
+  <div>
+    <h1>ひとりメモ</h1>
+    {% if total %}<p class="page-sub">{% if query %}{{ rows|length }}件（全{{ total }}件）{% else %}{{ total }}件{% endif %}</p>{% endif %}
+  </div>
+</div>
+
+<section class="card">
+  <div class="start-row">
+    <a class="btn btn-primary" href="/memos/talk"><i data-lucide="mic"></i>話して入力する</a>
+    <form method="post" action="/minutes" style="margin:0">
+      <input type="hidden" name="kind" value="{{ solo_kind }}">
+      <button class="btn" type="submit"><i data-lucide="audio-lines"></i>長く録音する</button>
+    </form>
+  </div>
+  <p class="hint" style="margin-top:10px">「話して入力する」は、話している間に文字が出ます。終わったらコピーするか、ひとりメモにできます。長い話は「長く録音する」か、画面を消しても録れるボイスメモで録って<a href="/minutes">議事録</a>の「ボイスメモから作る」へ。</p>
+  <p class="hint" style="margin-top:6px">できたひとりメモは、保管庫の「_授業以外\ひとりメモ」にも置きます（スマホのObsidianでも見られます）。録った日の日記のページにも出ます。</p>
+</section>
+
+{% if total %}
+<form method="get" action="/memos" class="search-row">
+  <input type="search" name="q" value="{{ query }}" maxlength="100" placeholder="言葉で探す（題名・中身）" aria-label="言葉で探す">
+  <button class="btn" type="submit"><i data-lucide="search"></i>探す</button>
+  {% if query %}<a class="btn" href="/memos"><i data-lucide="x"></i>解除</a>{% endif %}
+</form>
+{% endif %}
+
+{% if query and not rows %}
+<p class="empty" style="margin-top:14px">条件に合うひとりメモはありません。</p>
+{% elif not total %}
+<p class="empty" style="margin-top:14px">まだひとりメモはありません。</p>
+{% endif %}
+
+<div class="memo-list">
+  {% for row in rows %}
+  {% set m = row.memo.meeting %}
+  <a class="card memo" href="/minutes/{{ m.id }}">
+    <div class="memo-head">
+      <span class="memo-title">{{ m.title }}</span>
+      <span class="memo-date">{{ m.started_at.strftime("%m/%d") }}（{{ WD[m.started_at.weekday()] }}）{{ m.started_at.strftime("%H:%M") }}{% if m.total_ms %}・{{ row.duration }}{% endif %}</span>
+      {% if m.status != "done" %}<span class="tag{% if m.status == 'failed' %} ng{% endif %}">{{ row.status }}</span>{% endif %}
+    </div>
+    {% if row.memo.points %}
+    <ul>{% for point in row.memo.points %}<li>{{ point }}</li>{% endfor %}</ul>
+    {% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

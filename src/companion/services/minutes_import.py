@@ -92,6 +92,21 @@ def decode_chunks(path: Path, *, segment_sec: int = IMPORT_SEGMENT_SEC) -> Itera
         yield _to_wav(np.concatenate(pending))
 
 
+def decode_samples(path: Path) -> np.ndarray:
+    """短い音声ファイル（音声入力）を、Whisperにそのまま渡せる -1.0〜1.0 の float32 にする.
+
+    Raises:
+        AudioError: 音声として読めない.
+    """
+    parts = []
+    for chunk in decode_chunks(path):
+        with wave.open(io.BytesIO(chunk)) as wav:
+            parts.append(np.frombuffer(wav.readframes(wav.getnframes()), dtype=np.int16))
+    if not parts:
+        raise AudioError("音声が入っていませんでした。")
+    return np.concatenate(parts).astype(np.float32) / 32768.0
+
+
 def _frames(container, resampler) -> Iterator:
     for frame in container.decode(container.streams.audio[0]):
         yield from resampler.resample(frame)

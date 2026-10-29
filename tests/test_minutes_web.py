@@ -26,6 +26,19 @@ def env(tmp_path: Path, monkeypatch) -> Iterator[tuple[TestClient, Path, object]
     runtime = make_runtime(db_path, tmp_path, FakeTranscriber(["よろしくお願いします"]))
     monkeypatch.setattr(minutes_routes, "session", lambda: session(db_path))
     monkeypatch.setattr(minutes_routes, "get_runtime", lambda: runtime)
+    # 授業の一覧は本物の保管庫ではなく、テスト用の保管庫から作る.
+    from dataclasses import replace
+
+    from companion.config import get_config
+    from companion.web import minutes_scene_form
+
+    vault = tmp_path / "vault"
+    (vault / "3年３Q" / "自然言語処理" / "ノート").mkdir(parents=True)
+    test_config = replace(get_config(), notes_dir=vault)
+    monkeypatch.setattr(minutes_scene_form, "get_config", lambda: test_config)
+    from companion.web import minutes_words_routes
+
+    monkeypatch.setattr(minutes_words_routes, "get_config", lambda: test_config)
 
     with own_device_client(web_app.app) as client:
         yield client, db_path, runtime
@@ -399,3 +412,415 @@ def test_大きすぎる切れ端は読み切る前に断る(env, monkeypatch) -
     assert response.status_code == 413
     with session(db_path) as conn:
         assert db.list_segments(conn, 1) == []
+
+
+# ---- 場面（ゼミ・授業・打ち合わせ・ひとりメモ） ----
+
+
+def _created(client, data: dict) -> db.Meeting:
+    from companion.web import minutes_routes
+
+    location = client.post("/minutes", data=data, follow_redirects=False).headers["location"]
+    with minutes_routes.session() as conn:
+        return db.get_meeting(conn, int(location.rsplit("/", 1)[1]))
+
+
+def test_録音を始める欄で場面と授業を選べる(env) -> None:
+    client, _, _ = env
+
+    page = client.get("/minutes").text
+
+    assert 'name="kind"' in page and ">授業</option>" in page and ">ひとりメモ</option>" in page
+    assert 'value="3年３Q/自然言語処理"' in page
+    assert "/static/minutes/scene_fields.js" in page
+
+
+def test_授業を選んで始めると題名が空なら授業名にする(env) -> None:
+    client, _, _ = env
+
+    created = _created(client, {"title": "", "kind": "lecture", "course": "3年３Q/自然言語処理"})
+
+    assert (created.kind, created.course, created.title) == ("lecture", "3年３Q/自然言語処理", "自然言語処理")
+
+
+def test_一覧に無い授業や知らない場面は受け付けない(env) -> None:
+    client, _, _ = env
+
+    outside = _created(client, {"title": "x", "kind": "lecture", "course": "../../Windows"})
+    unknown = _created(client, {"title": "x", "kind": "evil", "course": "3年３Q/自然言語処理"})
+
+    assert (outside.kind, outside.course) == ("lecture", "")
+    assert (unknown.kind, unknown.course) == ("seminar", "")
+
+
+def test_一覧を場面と言葉で絞り込める(env) -> None:
+    client, _, _ = env
+    client.post("/minutes", data={"title": "ゼミ第5回", "kind": "seminar"})
+    client.post("/minutes", data={"title": "", "kind": "lecture", "course": "3年３Q/自然言語処理"})
+    client.post("/minutes", data={"title": "進路のこと", "kind": "solo"})
+
+    lectures = client.get("/minutes", params={"kind": "lecture"}).text
+    words = client.get("/minutes", params={"q": "第5回"}).text
+    solo = client.get("/minutes", params={"kind": "solo"}).text
+    nothing = client.get("/minutes", params={"q": "存在しない言葉"}).text
+
+    assert "授業・自然言語処理" in lectures and "ゼミ第5回" not in lectures
+    assert "ゼミ第5回" in words and "授業・自然言語処理" not in words
+    assert "進路のこと" in solo  # 場面でひとりメモを選んだときだけ出す
+    assert "0件（全2件）" in nothing and "条件に合う記録はありません" in nothing
+
+
+def test_清書が済んだ会議は場面を変えられ録音中は変えない(env) -> None:
+    client, db_path, _ = env
+    recording = _created(client, {"title": "ゼミ"})
+    done = _created(client, {"title": "ゼミ"})
+    with session(db_path) as conn:
+        db.set_status(conn, done.id, db.DONE)
+
+    client.post(f"/minutes/{done.id}/scene", data={"kind": "lecture", "course": "3年３Q/自然言語処理"})
+    client.post(f"/minutes/{recording.id}/scene", data={"kind": "solo"})
+
+    with session(db_path) as conn:
+        changed, unchanged = db.get_meeting(conn, done.id), db.get_meeting(conn, recording.id)
+    assert (changed.kind, changed.course) == ("lecture", "3年３Q/自然言語処理")
+    assert unchanged.kind == "seminar"
+    page = client.get(f"/minutes/{done.id}").text
+    assert "場面：授業・自然言語処理" in page
+    assert "大事な用語" in page  # 下書きの欄も授業の見出しになる
+
+
+def test_ボイスメモも場面を選んで送れる(env, tmp_path: Path) -> None:
+    client, db_path, runtime = env
+    wav = make_wav(1.0)
+
+    response = client.post(
+        "/minutes/import",
+        data={"title": "", "kind": "meeting", "recorded_at": "0"},
+        files={"audio": ("memo.wav", wav, "audio/wav")},
+        follow_redirects=False,
+    )
+
+    meeting_id = int(response.headers["location"].rsplit("/", 1)[1])
+    with session(db_path) as conn:
+        created = db.get_meeting(conn, meeting_id)
+    assert (created.kind, created.title) == ("meeting", "打ち合わせ")
+
+
+def test_授業以外の場面で絞り込むときは隠れた授業の欄を使わない(env) -> None:
+    client, _, _ = env
+    client.post("/minutes", data={"title": "ゼミ第5回", "kind": "seminar"})
+
+    page = client.get("/minutes", params={"kind": "seminar", "course": "3年３Q/自然言語処理"}).text
+
+    assert "ゼミ第5回" in page and "1件（全1件）" in page
+
+
+# ---- ショートカットから送るひとりメモ ----
+
+
+def test_ショートカットから送った録音はひとりメモとして清書し終わったら知らせる(env, tmp_path: Path) -> None:
+    from test_minutes_import import make_m4a
+
+    client, db_path, runtime = env
+    notices: list[tuple] = []
+    runtime.set_notifier(lambda meeting_id, status, error: notices.append((meeting_id, status)))
+    m4a = make_m4a(tmp_path, 5)
+
+    response = client.post("/minutes/quick", files={"audio": ("録音.m4a", m4a.read_bytes(), "audio/x-m4a")})
+
+    assert response.status_code == 200
+    assert response.text == "受け取りました。できたら通知します。"
+    with session(db_path) as conn:
+        meeting = db.get_meeting(conn, 1)
+        assert meeting.kind == "solo"
+        assert meeting.title.startswith("ひとりメモ ")
+        wait_until(lambda: db.get_meeting(conn, 1).status == "done")
+        assert "ひとりメモ" in db.get_meeting(conn, 1).note_path  # 保管庫の _授業以外\ひとりメモ に書き出す
+    wait_until(lambda: notices == [(1, "done")])
+
+
+def test_ショートカットから読めないファイルが届いたら理由を1行で返す(env) -> None:
+    client, db_path, _ = env
+
+    response = client.post("/minutes/quick", files={"audio": ("memo.txt", "ただのメモ".encode() * 50, "text/plain")})
+
+    assert response.status_code == 400
+    assert response.text.startswith("送れませんでした: ")
+    with session(db_path) as conn:
+        assert db.list_meetings(conn) == []
+
+
+def test_ひとりメモの通知はひとりメモと書き中身は載せない(env, monkeypatch) -> None:
+    from companion.web import minutes_routes
+
+    client, _, _ = env
+    client.post("/minutes", data={"title": "転職の悩み", "kind": "solo"})
+    sent: list[dict] = []
+    monkeypatch.setattr(minutes_routes, "send_notification", lambda body, **kwargs: sent.append({"body": body, **kwargs}))
+
+    minutes_routes._notify_minutes(1, db.DONE, None)
+
+    assert sent[0]["title"] == "ひとりメモができました"
+    assert "のひとりメモができました。" in sent[0]["body"]
+    assert "転職" not in sent[0]["body"]
+
+
+def test_ショートカットのキーの名前が違っても録音を受け取る(env, tmp_path: Path) -> None:
+    from test_minutes_import import make_m4a
+
+    client, db_path, _ = env
+    m4a = make_m4a(tmp_path, 3)
+
+    # iPhoneのキーボードは頭を大文字にするので、キーが Audio になりやすい
+    response = client.post("/minutes/quick", files={"Audio": ("録音.m4a", m4a.read_bytes(), "audio/x-m4a")})
+
+    assert response.status_code == 200
+    with session(db_path) as conn:
+        assert db.get_meeting(conn, 1).kind == "solo"
+
+
+def test_ショートカットが本文に録音をそのまま入れて送っても受け取る(env, tmp_path: Path) -> None:
+    from test_minutes_import import make_m4a
+
+    client, db_path, runtime = env
+    m4a = make_m4a(tmp_path, 3)
+
+    response = client.post("/minutes/quick", content=m4a.read_bytes(), headers={"Content-Type": "audio/x-m4a"})
+
+    assert response.status_code == 200
+    with session(db_path) as conn:
+        assert db.get_meeting(conn, 1).kind == "solo"
+    assert (runtime.audio.meeting_dir(1) / "元の録音.m4a").exists()
+
+
+def test_ショートカットのフォームに録音が無ければ直し方を返す(env) -> None:
+    client, db_path, _ = env
+
+    form = client.post("/minutes/quick", data={"audio": "録音されたオーディオ"})
+    empty = client.post("/minutes/quick")
+
+    assert form.status_code == 400 and "種類「ファイル」" in form.text
+    assert empty.status_code == 400 and "録音ファイルが入っていません" in empty.text
+    with session(db_path) as conn:
+        assert db.list_meetings(conn) == []
+
+
+# ---- 辞書 ----
+
+
+def test_辞書に語を足して消せる(env) -> None:
+    client, db_path, _ = env
+    from companion.db import words as words_db
+
+    page = client.get("/minutes/words")
+    added = client.post("/minutes/words", data={"word": "形態素解析", "variants": "形体素解析、け", "course": "3年３Q/自然言語処理"}, follow_redirects=False)
+    outside = client.post("/minutes/words", data={"word": "田中", "course": "../../Windows"})
+    listed = client.get("/minutes/words").text
+
+    assert page.status_code == 200 and "消すつなぎ言葉" in page.text
+    assert added.status_code == 303
+    with session(db_path) as conn:
+        saved = words_db.list_words(conn)
+    assert [(w.word, w.variants, w.course) for w in saved] == [("田中", (), ""), ("形態素解析", ("形体素解析",), "3年３Q/自然言語処理")]
+    assert outside.status_code == 200
+    assert "自然言語処理" in listed
+
+    client.post(f"/minutes/words/{saved[0].id}/delete")
+    with session(db_path) as conn:
+        assert [w.word for w in words_db.list_words(conn)] == ["形態素解析"]
+
+
+def test_正しい書き方が空なら理由を出す(env) -> None:
+    client, _, _ = env
+
+    response = client.post("/minutes/words", data={"word": "  "})
+
+    assert response.status_code == 400
+    assert "正しい書き方を入れてください" in response.text
+
+
+def test_辞書の語は消す確認の文にそのまま埋め込まない(env) -> None:
+    client, _, _ = env
+    client.post("/minutes/words", data={"word": "');alert(1);//"})
+
+    page = client.get("/minutes/words").text
+
+    assert "confirm(this.dataset.confirm)" in page
+    assert "');alert(1);//" not in page
+
+
+def test_つなぎ言葉の一覧を保存できる(env) -> None:
+    client, db_path, _ = env
+    from companion.db import words as words_db
+
+    client.post("/minutes/words/fillers", data={"fillers": "えーと、あのー\nうーん"})
+
+    with session(db_path) as conn:
+        assert words_db.get_setting(conn, words_db.FILLERS_KEY) == "えーと、あのー、うーん"
+    assert "えーと、あのー、うーん" in client.get("/minutes/words").text
+
+
+def test_一覧から辞書の画面に行ける(env) -> None:
+    client, _, _ = env
+
+    assert 'href="/minutes/words"' in client.get("/minutes").text
+
+
+def test_ショートカットから大きすぎると申告されたものは読む前に断る(env, monkeypatch) -> None:
+    from companion.web import minutes_routes
+
+    client, db_path, _ = env
+    monkeypatch.setattr(minutes_routes, "MAX_IMPORT_BYTES", 10)
+
+    response = client.post("/minutes/quick", files={"audio": ("録音.m4a", b"x" * 100, "audio/x-m4a")})
+
+    assert response.status_code == 400 and "大きすぎます" in response.text
+    with session(db_path) as conn:
+        assert db.list_meetings(conn) == []
+
+
+# ---- 音声入力 ----
+
+
+def test_音声入力は録音を文字にして返し録音は残さない(env) -> None:
+    from companion.db import words as words_db
+
+    client, db_path, runtime = env
+    runtime._transcriber.texts = ["えーっと、田名かさんに送ってください"]
+    with session(db_path) as conn:
+        words_db.save_word(conn, "田中", ("田名か",), "")
+
+    response = client.post("/dictate", content=make_wav(1.0), headers={"Content-Type": "audio/wav"})
+
+    assert response.status_code == 200
+    assert response.text == "田中さんに送ってください"
+    assert runtime._transcriber.hotwords == "田中"
+    assert runtime._transcriber.prompts[-1] == ""  # 前の文が届かなければ何も渡さない
+    assert not any(runtime.audio.root.rglob("*.wav"))  # 文字にしたら消す
+    with session(db_path) as conn:
+        assert db.list_meetings(conn) == []  # 議事録には入れない
+
+
+def test_音声入力は前の切れ端の文をWhisperに渡す_長ければ後ろだけ(env) -> None:
+    from urllib.parse import quote
+
+    from companion.dictation.client import MAX_PREVIOUS_CHARS, PREVIOUS_HEADER
+
+    client, _, runtime = env
+    wav = make_wav(1.0)
+
+    client.post("/dictate", content=wav, headers={"Content-Type": "audio/wav", PREVIOUS_HEADER: quote("形態素解析の話。")})
+    client.post("/dictate", content=wav, headers={"Content-Type": "audio/wav", PREVIOUS_HEADER: quote("あ" * 500 + "末")})
+
+    assert runtime._transcriber.prompts[-2] == "形態素解析の話。"
+    assert len(runtime._transcriber.prompts[-1]) == MAX_PREVIOUS_CHARS
+    assert runtime._transcriber.prompts[-1].endswith("末")
+
+
+def test_音声入力はショートカットのフォームからも受ける(env, tmp_path: Path) -> None:
+    from test_minutes_import import make_m4a
+
+    client, _, runtime = env
+    runtime._transcriber.texts = ["明日の予定"]
+
+    response = client.post("/dictate", files={"Audio": ("録音.m4a", make_m4a(tmp_path, 2).read_bytes(), "audio/x-m4a")})
+
+    assert response.status_code == 200 and response.text == "明日の予定"
+
+
+def test_長すぎる音声入力は断る(env, monkeypatch) -> None:
+    from companion.web import dictate_routes
+
+    client, _, runtime = env
+    monkeypatch.setattr(dictate_routes, "MAX_DICTATION_SEC", 1)
+
+    response = client.post("/dictate", content=make_wav(2.0), headers={"Content-Type": "audio/wav"})
+
+    assert response.status_code == 400 and "ひとりメモ" in response.text
+    assert not any(runtime.audio.root.rglob("*.wav"))
+
+
+def test_音声入力で録音が入っていなければ理由を返す(env) -> None:
+    client, _, _ = env
+
+    response = client.post("/dictate")
+
+    assert response.status_code == 400 and "録音ファイルが入っていません" in response.text
+
+
+# ---- ひとりメモの画面と話して入力 ----
+
+
+def test_ひとりメモは議事録の一覧から分けて専用の一覧に要点つきで出す(env) -> None:
+    client, db_path, _ = env
+    client.post("/minutes", data={"title": "ゼミ第5回", "kind": "seminar"})
+    client.post("/minutes", data={"title": "進路のこと", "kind": "solo"})
+    with session(db_path) as conn:
+        db.save_final(conn, 2, "## 要点（3行以内）\n\n- 院に行くか迷っている\n\n## 考えたこと\n\n- 長い本文の中身", None, polished=True)
+        db.set_status(conn, 2, db.DONE)
+
+    minutes = client.get("/minutes").text
+    memos = client.get("/memos").text
+    found = client.get("/memos", params={"q": "院に行く"}).text
+    nothing = client.get("/memos", params={"q": "存在しない言葉"}).text
+
+    assert "ゼミ第5回" in minutes and "進路のこと" not in minutes
+    assert "進路のこと" in memos and "院に行くか迷っている" in memos and "ゼミ第5回" not in memos
+    assert "長い本文の中身" not in memos  # 一覧に出すのは要点だけ
+    assert "進路のこと" in found
+    assert "条件に合うひとりメモはありません" in nothing
+    assert 'href="/memos"' in memos  # 左のメニューに入口がある
+
+
+def test_話して入力の画面が開ける(env) -> None:
+    client, _, _ = env
+
+    page = client.get("/memos/talk").text
+
+    assert "/static/minutes/recorder.js" in page and "/static/memos/talk.js" in page
+    assert "ひとりメモにする" in page and "コピー" in page
+
+
+def test_話して入力の文字からひとりメモを作る(env) -> None:
+    client, db_path, _ = env
+
+    response = client.post("/memos/from-text", json={"pieces": [
+        {"at": SEG + 3000, "ms": 1500, "text": "二つ目。"},
+        {"at": SEG, "ms": 2000, "text": "一つ目。"},
+        {"at": SEG + 5000, "ms": 800, "text": "  "},
+    ]})
+
+    assert response.status_code == 200
+    url = response.json()["url"]
+    memo_id = int(url.rsplit("/", 1)[1])
+    wait_until(lambda: client.get(url).status_code == 200 and _status(db_path, memo_id) == "done")
+    with session(db_path) as conn:
+        memo = db.get_meeting(conn, memo_id)
+        texts = [s.text for s in db.list_segments(conn, memo_id)]
+    assert memo.kind == "solo" and memo.title.startswith("ひとりメモ ")
+    assert texts == ["一つ目。", "二つ目。"]
+
+
+def _status(db_path: Path, meeting_id: int) -> str:
+    with session(db_path) as conn:
+        return db.get_meeting(conn, meeting_id).status
+
+
+@pytest.mark.parametrize("payload", [
+    {},
+    {"pieces": []},
+    {"pieces": [{"at": 5, "ms": 100, "text": "x"}]},
+    {"pieces": [{"at": SEG, "ms": -1, "text": "x"}]},
+    {"pieces": [{"at": SEG, "ms": 100, "text": "   "}]},
+    {"pieces": [{"at": SEG, "ms": 100, "text": "x" * 3000}]},
+    ["not", "a", "dict"],
+])
+def test_話して入力の文字が変なら作らない(env, payload) -> None:
+    client, db_path, _ = env
+
+    response = client.post("/memos/from-text", json=payload)
+
+    assert response.status_code == 400 and response.json()["ok"] is False
+    with session(db_path) as conn:
+        assert db.list_meetings(conn) == []
+

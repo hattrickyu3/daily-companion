@@ -113,14 +113,39 @@ def test_起動し直した直後は会議の名前と今の記録も渡す() ->
     assert "これまでの記録" not in ongoing
 
 
-def test_AIへの指示はゼミを前提にしない() -> None:
-    from companion.services.minutes_editor import SYSTEM_PROMPT
-    from companion.services.minutes_final import POLISH_SYSTEM_PROMPT
+def test_AIへの指示は選んだ場面の見出しで書かせる() -> None:
+    from companion.services.minutes_editor import system_prompt
+    from companion.services.minutes_final import polish_system_prompt
+    from companion.services.minutes_scenes import LECTURE, SEMINAR, SOLO, get_scene
 
-    for prompt in (SYSTEM_PROMPT, POLISH_SYSTEM_PROMPT):
-        assert "ゼミの議事録" not in prompt
-        assert "宿題" not in prompt
-        assert "会議の名前" in prompt
+    for build in (system_prompt, polish_system_prompt):
+        seminar, lecture, solo = (build(get_scene(k)) for k in (SEMINAR, LECTURE, SOLO))
+        assert "場面: ゼミ" in seminar and "決まったこと" in seminar
+        assert "場面: 授業" in lecture and "テストに出そうな所" in lecture and "決まったこと\n" not in lecture
+        assert "場面: ひとりメモ" in solo and "考えたこと" in solo
+        assert all("宿題" not in p for p in (seminar, lecture, solo))
+    # ひとりメモは1人なので、清書で話者の名前を結び付けさせない
+    assert "@@話者" not in polish_system_prompt(get_scene(SOLO))
+    assert "@@話者" in polish_system_prompt(get_scene(SEMINAR))
+
+
+def test_場面の見出しに無い下書きも落とさず清書に渡す() -> None:
+    from companion.services.minutes_scenes import LECTURE, get_scene
+
+    draft = {"要点": "- 形態素解析", "決まったこと": "- 前の場面で書いた"}
+
+    text = render_markdown(draft, get_scene(LECTURE).sections)
+
+    assert text.index("## 要点") < text.index("## 決まったこと")
+    assert "- 前の場面で書いた" in text
+
+
+def test_授業の下書きでは授業の見出しを受け取る() -> None:
+    from companion.services.minutes_scenes import LECTURE, get_scene
+
+    ops = parse_ops("@@+ 大事な用語\n- 形態素: 意味の最小単位\n@@ 決まったこと\n- 無視される", sections=get_scene(LECTURE).sections)
+
+    assert [(op.section, op.text) for op in ops] == [("大事な用語", "- 形態素: 意味の最小単位")]
 
 
 def _line(event: dict) -> bytes:

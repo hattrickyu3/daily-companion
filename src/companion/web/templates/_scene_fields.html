@@ -1,0 +1,28 @@
+{# 場面と授業を選ぶ欄. prefix は同じ画面に2つ置いても id がぶつからないようにするため.
+   授業を選んだときだけ授業の欄を出す（scene_fields.js）。題名を手で変えていなければ、場面や授業に合わせて題名も変える。 #}
+{% macro scene_fields(prefix, selected_kind="seminar", selected_course="") %}
+<div>
+  <label for="{{ prefix }}-kind">場面</label>
+  <select id="{{ prefix }}-kind" name="kind" data-scene-kind>
+    {% for key, label, default_title in scenes %}
+    <option value="{{ key }}" data-default-title="{{ default_title }}"{% if key == selected_kind %} selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+</div>
+<div data-scene-course {% if selected_kind != lecture_kind %}hidden{% endif %}>
+  <label for="{{ prefix }}-course">授業</label>
+  {% if courses %}
+  <select id="{{ prefix }}-course" name="course">
+    <option value="">（選ばない）</option>
+    {% set ns = namespace(term="") %}
+    {% for c in courses %}
+      {% if c.term != ns.term %}{% if ns.term %}</optgroup>{% endif %}<optgroup label="{{ c.term }}">{% set ns.term = c.term %}{% endif %}
+      <option value="{{ c.path }}" data-default-title="{{ c.name }}"{% if c.path == selected_course %} selected{% endif %}>{{ c.name }}</option>
+    {% endfor %}
+    {% if ns.term %}</optgroup>{% endif %}
+  </select>
+  {% else %}
+  <p class="hint">保管庫（NOTES_DIR）に授業のフォルダが見つかりません。</p>
+  {% endif %}
+</div>
+{% endmacro %}

@@ -16,10 +16,12 @@ dependencies = [
     "numpy>=2.5.3",
     "nvidia-cublas-cu12>=12.9.2.10",
     "nvidia-cudnn-cu12>=9,<10",
+    "pynput>=1.8.2",
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.32",
     "sherpa-onnx>=1.13.8",
     "sherpa-onnx-core==1.13.8",
+    "sounddevice>=0.5.6",
     "tzdata>=2026.3",
     "uvicorn>=0.38.0",
 ]

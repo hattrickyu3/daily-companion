@@ -79,6 +79,25 @@ foreach ($job in $jobs) {
     Write-Host "登録しました: $($job.Name)  $schedule  $($job.Desc)"
 }
 
+# 音声入力ツール（右Ctrlで話すとカーソルの位置に文字が入る）。
+# 画面とキーボードを使うので、S4U（セッション0）ではなく、ログインしたときに本人の画面で動かす。
+# pythonw で動かして黒い窓を出さない。
+$pythonw = Join-Path $root '.venv\Scripts\pythonw.exe'
+if (Test-Path $pythonw) {
+    $action = New-ScheduledTaskAction -Execute $pythonw -Argument '-m companion.dictation' -WorkingDirectory $root
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    # Webアプリより先に立ち上がっても、送るときにつながれば動く。少し待ってから起こす。
+    $trigger.Delay = 'PT30S'
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName 'daily-companion-dictation' -Action $action -Trigger $trigger `
+        -Principal $principal -Settings $settings -Description '音声入力ツール（右Ctrl）' -Force | Out-Null
+    Write-Host '登録しました: daily-companion-dictation  ログイン時  音声入力ツール（右Ctrl）'
+} else {
+    Write-Host "音声入力ツールは登録しませんでした（$pythonw がありません。先に uv sync を実行してください）"
+}
+
 Write-Host ''
 Write-Host '登録済みのタスク:'
 Get-ScheduledTask -TaskName 'daily-companion-*' |

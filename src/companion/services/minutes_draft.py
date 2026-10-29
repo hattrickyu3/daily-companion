@@ -52,13 +52,13 @@ def _parse_header(line: str) -> tuple[str, str] | None:
     return name.strip(), mode
 
 
-def _normalize_section(name: str) -> str | None:
+def _normalize_section(name: str, sections: tuple[str, ...] = SECTIONS) -> str | None:
     """見出しの名前を既知のものに寄せる. 「宿題（誰が…）」のような飾り付きも受ける."""
-    for section in SECTIONS:
+    for section in sections:
         if name == section or name.startswith(section):
             return section
     for old, new in LEGACY_SECTIONS.items():
-        if name == old or name.startswith(old):
+        if new in sections and (name == old or name.startswith(old)):
             return new
     return None
 
@@ -72,8 +72,8 @@ def normalize_draft(draft: dict[str, str]) -> dict[str, str]:
     return renamed
 
 
-def parse_ops(text: str, *, final: bool = True) -> list[EditOp]:
-    """応答の文字列から編集を取り出す.
+def parse_ops(text: str, *, final: bool = True, sections: tuple[str, ...] = SECTIONS) -> list[EditOp]:
+    """応答の文字列から編集を取り出す. sections はその場面の見出し（services/minutes_scenes.py）.
 
     final=False のときは届いている途中とみなし、最後の行がまだ書きかけの見出し（@@ だけ等）なら
     中身として扱わない。知らない見出しの中身と、見出しより前の前置きは捨てる。
@@ -98,7 +98,7 @@ def parse_ops(text: str, *, final: bool = True) -> list[EditOp]:
                 body.append(line.rstrip())
             continue
         flush()
-        section = _normalize_section(header[0])
+        section = _normalize_section(header[0], sections)
         current = (section, header[1]) if section else None
         body = []
     flush()
@@ -122,8 +122,19 @@ def editing_section(ops: list[EditOp]) -> str | None:
     return ops[-1].section if ops else None
 
 
-def render_markdown(draft: dict[str, str]) -> str:
+def ordered_sections(draft: dict[str, str], sections: tuple[str, ...] = SECTIONS) -> list[str]:
+    """場面の見出しの順に並べ、そのあとに下書きにだけある見出しを付ける.
+
+    場面を後から変えた会議では、下書きが前の場面の見出しで書かれている。それも落とさず出す。
+    """
+    return [*sections, *(name for name in draft if name not in sections)]
+
+
+def render_markdown(draft: dict[str, str], sections: tuple[str, ...] = SECTIONS) -> str:
     """下書きをMarkdownにする. 清書の材料と、清書に失敗したときの代わりに使う."""
     draft = normalize_draft(draft)
-    blocks = [f"## {section_label(s)}\n\n{draft[s].strip()}" for s in SECTIONS if draft.get(s, "").strip()]
+    blocks = [
+        f"## {section_label(s)}\n\n{draft[s].strip()}"
+        for s in ordered_sections(draft, sections) if draft.get(s, "").strip()
+    ]
     return "\n\n".join(blocks)

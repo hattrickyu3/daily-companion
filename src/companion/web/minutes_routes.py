@@ -33,15 +33,18 @@ from companion.config import DIARIZATION_MODELS_DIR, get_config
 from companion.integrations.notify import send_notification
 from companion.links import app_url
 from companion.db import meetings as db
+from companion.db import words as words_db
 from companion.db.connection import apply_schema, session
 from companion.integrations.diarization import Diarizer
 from companion.integrations.whisper import Transcriber
 from companion.services.minutes_audio import MAX_SEGMENT_BYTES, AudioError, AudioStore
-from companion.services.minutes_draft import SECTIONS, normalize_draft, section_label
+from companion.services.minutes_draft import normalize_draft, ordered_sections, section_label
 from companion.services.minutes_import import MAX_IMPORT_SEC, decode_chunks, probe_duration_ms, repair_caf
 from companion.services.minutes_runtime import M4A_NAME, MinutesRuntime
+from companion.services.minutes_scenes import LECTURE, SOLO, clean_kind, filter_meetings, get_scene, scene_label
 from companion.services.minutes_speakers import parse_participants
 from companion.web.access import is_own_device
+from companion.web.minutes_scene_form import SceneChoice, read_choice, scene_context
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +100,7 @@ def _build_runtime() -> MinutesRuntime:
         diarizer=Diarizer(DIARIZATION_MODELS_DIR),
         tz=config.timezone,
         minutes_dir=config.minutes_dir,
+        notes_dir=config.notes_dir,
         recordings_dir=config.recordings_dir,
     )
     runtime.set_notifier(_notify_minutes)
@@ -116,11 +120,14 @@ def _notify_minutes(meeting_id: int | None, status: str, error: str | None) -> N
         return
     with session() as conn:
         meeting = db.get_meeting(conn, meeting_id)
-    name = f"{meeting.started_at:%m/%d %H:%M}の会議" if meeting else "録音"
+    name = f"{meeting.started_at:%m/%d %H:%M}の会議の議事録" if meeting else "録音の議事録"
+    kind = "議事録"
+    if meeting and get_scene(meeting.kind).key == SOLO:
+        name, kind = f"{meeting.started_at:%m/%d %H:%M}のひとりメモ", "ひとりメモ"
     if status == db.DONE:
-        message, title, tags = f"{name}の議事録ができました。", "議事録ができました", ["memo"]
+        message, title, tags = f"{name}ができました。", f"{kind}ができました", ["memo"]
     else:
-        message, title, tags = f"{name}の議事録に確認が必要です。", "議事録を確認してください", ["warning"]
+        message, title, tags = f"{name}に確認が必要です。", f"{kind}を確認してください", ["warning"]
     send_notification(message, title=title, tags=tags, click_url=app_url(f"/minutes/{meeting_id}"))
 
 
@@ -207,13 +214,22 @@ def _clean_participants(raw: str) -> str:
     return "、".join(parse_participants(CONTROL_CHARS.sub(" ", raw)[:MAX_PARTICIPANTS_LENGTH]))
 
 
-def _clean_title(raw: str) -> str:
-    return CONTROL_CHARS.sub("", raw).strip()[:MAX_TITLE_LENGTH] or DEFAULT_TITLE
+def _clean_title(raw: str, default: str = DEFAULT_TITLE) -> str:
+    return CONTROL_CHARS.sub("", raw).strip()[:MAX_TITLE_LENGTH] or default
+
+
+# 一覧で一度に読む会議の数. 絞り込みはこの中から行う.
+LIST_LIMIT = 500
+MAX_QUERY_LENGTH = 100
 
 
 @router.get("", response_class=HTMLResponse)
-def minutes_page(request: Request) -> HTMLResponse:
-    return _list_page(request)
+def minutes_page(request: Request, kind: str = "", course: str = "", q: str = "") -> HTMLResponse:
+    """一覧. 場面・授業・言葉で絞り込める（空なら全部）."""
+    kind = clean_kind(kind) if kind else ""
+    # 授業の欄は隠しても送られてくるので、授業を選んだときだけ使う.
+    filters = {"kind": kind, "course": course.strip() if kind == LECTURE else "", "q": q.strip()[:MAX_QUERY_LENGTH]}
+    return _list_page(request, filters=filters)
 
 
 def _webdav_info(request: Request) -> dict[str, str | None] | None:
@@ -232,13 +248,27 @@ def _webdav_info(request: Request) -> dict[str, str | None] | None:
     return {"host": f"{host}/webdav", "user": config.webdav_user, "password": password}
 
 
-def _list_page(request: Request, *, import_error: str | None = None, status_code: int = 200) -> HTMLResponse:
+def _list_page(
+    request: Request, *, import_error: str | None = None, status_code: int = 200,
+    filters: dict[str, str] | None = None,
+) -> HTMLResponse:
     store = get_runtime().audio  # テーブルをそろえるため、一覧を読む前に動かす
+    filters = filters or {"kind": "", "course": "", "q": ""}
     with session() as conn:
-        meetings = db.list_meetings(conn)
+        everything = db.list_meetings(conn, limit=LIST_LIMIT)
+        suggestion_count = words_db.count_suggestions(conn)
+    meetings = filter_meetings(everything, kind=filters["kind"], course=filters["course"], query=filters["q"])
+    if not filters["kind"]:
+        # ひとりメモは /memos に分けた. 場面で「ひとりメモ」を選んだときだけ、ここにも出す.
+        meetings = [m for m in meetings if get_scene(m.kind).key != SOLO]
     return templates.TemplateResponse(
         request, "minutes.html",
         {
+            **scene_context(),
+            "filters": filters,
+            "suggestion_count": suggestion_count,
+            "filtered": any(filters.values()),
+            "total": sum(1 for m in everything if get_scene(m.kind).key != SOLO),
             "import_error": import_error,
             "webdav": _webdav_info(request),
             "recorder_folder": get_config().recorder_folder,
@@ -248,6 +278,7 @@ def _list_page(request: Request, *, import_error: str | None = None, status_code
                     "duration": duration_label(m.total_ms),
                     "summary": summary_line(m),
                     "deletable": is_deletable(m, store),
+                    "scene": scene_label(m),
                 }
                 for m in meetings
             ],
@@ -259,11 +290,15 @@ def _list_page(request: Request, *, import_error: str | None = None, status_code
 
 
 @router.post("")
-def create_meeting(title: str = Form(DEFAULT_TITLE), participants: str = Form("")) -> RedirectResponse:
+def create_meeting(
+    title: str = Form(""), participants: str = Form(""), kind: str = Form(""), course: str = Form(""),
+) -> RedirectResponse:
     get_runtime()
+    choice = read_choice(kind, course)
     with session() as conn:
         meeting_id = db.create_meeting(
-            conn, _clean_title(title), now_local(), participants=_clean_participants(participants)
+            conn, _clean_title(title, choice.default_title()), now_local(),
+            participants=_clean_participants(participants), kind=choice.kind, course=choice.course,
         )
     return RedirectResponse(f"/minutes/{meeting_id}", status_code=303)
 
@@ -272,9 +307,11 @@ def create_meeting(title: str = Form(DEFAULT_TITLE), participants: str = Form(""
 async def import_recording(
     request: Request,
     audio: UploadFile = File(...),
-    title: str = Form(DEFAULT_TITLE),
+    title: str = Form(""),
     participants: str = Form(""),
     recorded_at: int = Form(0),
+    kind: str = Form(""),
+    course: str = Form(""),
 ) -> HTMLResponse | RedirectResponse:
     """ボイスメモなどの録り終えた音声ファイルから議事録を作る.
 
@@ -282,27 +319,56 @@ async def import_recording(
     録音の長さの分だけさかのぼった時刻を会議の始まりにする。読めないファイルなら会議は作らず、一覧に理由を出す。
     """
     runtime = await run_in_threadpool(get_runtime)
-    suffix = audio.filename and Path(audio.filename).suffix
-    suffix = suffix.lower() if suffix and AUDIO_SUFFIX.fullmatch(suffix) else ".audio"
-    staging = runtime.audio.root / INCOMING_DIR_NAME / f"{uuid.uuid4().hex}{suffix}"
+    try:
+        staging, duration_ms = await stage_upload(runtime, audio)
+    except AudioError as exc:
+        return await run_in_threadpool(_list_page, request, import_error=str(exc), status_code=400)
+    choice = await run_in_threadpool(read_choice, kind, course)
+    meeting_id = await run_in_threadpool(
+        start_imported, runtime, staging,
+        title=_clean_title(title, choice.default_title()), participants=_clean_participants(participants),
+        start=_recording_start(recorded_at, duration_ms), duration_ms=duration_ms, scene=choice,
+    )
+    return RedirectResponse(f"/minutes/{meeting_id}", status_code=303)
+
+
+async def stage_upload(runtime: MinutesRuntime, audio: UploadFile) -> tuple[Path, int]:
+    """届いた音声ファイルを受け取り箱に置き、読めるか確かめる. (置いた場所, 長さミリ秒) を返す.
+
+    Raises:
+        AudioError: 読めない・長すぎる. 置いたファイルは消してある.
+    """
+    staging = staging_path(runtime, audio.filename)
     try:
         await run_in_threadpool(_save_upload, audio, staging)
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
+    return staging, await check_staged(staging)
+
+
+def staging_path(runtime: MinutesRuntime, filename: str | None) -> Path:
+    """届いた音声を一時的に置く場所. 拡張子はファイル名から取るが、英数字だけ受ける."""
+    suffix = filename and Path(filename).suffix
+    suffix = suffix.lower() if suffix and AUDIO_SUFFIX.fullmatch(suffix) else ".audio"
+    return runtime.audio.root / INCOMING_DIR_NAME / f"{uuid.uuid4().hex}{suffix}"
+
+
+async def check_staged(staging: Path) -> int:
+    """受け取り箱に置いた音声が読めるか確かめ、長さ（ミリ秒）を返す.
+
+    Raises:
+        AudioError: 読めない・長すぎる. 置いたファイルは消してある.
+    """
+    try:
         await run_in_threadpool(repair_caf, staging)
         duration_ms = await run_in_threadpool(probe_duration_ms, staging)
         if duration_ms > MAX_IMPORT_SEC * 1000:
             raise AudioError(f"{MAX_IMPORT_SEC // 3600}時間より長い録音は送れません。")
-    except AudioError as exc:
-        staging.unlink(missing_ok=True)
-        return await run_in_threadpool(_list_page, request, import_error=str(exc), status_code=400)
     except BaseException:
         staging.unlink(missing_ok=True)
         raise
-    meeting_id = await run_in_threadpool(
-        start_imported, runtime, staging,
-        title=_clean_title(title), participants=_clean_participants(participants),
-        start=_recording_start(recorded_at, duration_ms), duration_ms=duration_ms,
-    )
-    return RedirectResponse(f"/minutes/{meeting_id}", status_code=303)
+    return duration_ms
 
 
 def _save_upload(upload: UploadFile, target: Path) -> None:
@@ -330,14 +396,18 @@ def _recording_start(recorded_at_ms: int, duration_ms: int) -> datetime:
 
 def start_imported(
     runtime: MinutesRuntime, staging: Path, *, title: str, participants: str, start: datetime, duration_ms: int,
-    notify: bool = False,
+    notify: bool = False, scene: SceneChoice | None = None,
 ) -> int:
     """会議を作り、元のファイルを会議のフォルダへ移して取り込む. 会議の id を返す.
 
     notify が True なら、清書が終わったとき（取り込めなかったときも）iPhoneに知らせる。
+    scene が None（録音アプリから自動で届いたもの）ならゼミとして作る。あとから会議の画面で変えられる。
     """
+    scene = scene or SceneChoice(clean_kind(""), "")
     with session() as conn:
-        meeting_id = db.create_meeting(conn, title, start, participants=participants)
+        meeting_id = db.create_meeting(
+            conn, title, start, participants=participants, kind=scene.kind, course=scene.course
+        )
         db.set_ended(conn, meeting_id, start + timedelta(milliseconds=duration_ms))
         # 取り込んでいる間に「止めて清書する」を押されたり、録音中として編集係が動いたりしないよう、はじめから清書中にする.
         db.set_status(conn, meeting_id, db.FINISHING)
@@ -362,11 +432,18 @@ def start_imported(
 def meeting_page(request: Request, meeting_id: int) -> HTMLResponse:
     meeting = _load_meeting(meeting_id)
     get_runtime()  # 前回の残りの文字起こしを拾い直すため、画面を開いた時点で動かしておく
+    scene = get_scene(meeting.kind)
     return templates.TemplateResponse(
         request, "meeting.html",
         {
+            **scene_context(),
             "meeting": meeting,
-            "sections": [(s, section_label(s)) for s in SECTIONS],
+            "scene": scene,
+            "scene_name": scene_label(meeting),
+            # 場面を後から変えた会議では、下書きが前の場面の見出しで書かれているので、それも出す.
+            "sections": [
+                (s, section_label(s)) for s in ordered_sections(normalize_draft(meeting.draft), scene.sections)
+            ],
             "final_html": markdown.render(meeting.final_text) if meeting.final_text else "",
             "note_link": _note_link(meeting.note_path),
         },
